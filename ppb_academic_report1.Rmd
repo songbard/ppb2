@@ -1,0 +1,99 @@
+---
+title: Change in Use of Force by Portland Police Bureau on Mentally Ill Citizens during US Department of Justice Oversight, 2018 to 2022. 
+  Oregon
+author: "Jonathan Betz Brown, MPP, PhD"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+*Copyright 2022 by Jonathan B Brown.  Do not copy of distribute at this time, this is an evolving draft of a manuscript to be submitted for publication.  Once completed, the plan is to license this material for free duplication and modification under the most recent version of the Replication Commons Public License, posted at www.replicationcommons.org.* 
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+library(ggplot2)
+#library(pacman)
+library(stringr)
+library(skimr)
+library(rio)
+library(ggtext)
+
+
+#IMPORTANT: package = MASS (needed for negative binomial regression) interferes with dplyr in tidyverse so the select() command does not work.  Must say dplyr::select().  I put the negbino at the end of the script so as not to interfere.
+```
+
+
+
+LIT REVIEW
+	reviews of performance nationally and locally….”since xxxx, doj has initiated yy suits.
+	In Portland.  Focus on mentally ill but initiated also by racial concern.  Dates, measures, money spent, failures, demonstrations.  Brief history…
+	“we sought to measure effectiveness using available data.
+
+**METHODS**
+
+**Overview.**  The principal complaint that led to Settlement Agreement ##### between the US Department of Justice and the City of Portland was that the City's Police Bureau was using unconstitutionally excessive force against persons impaired by mental illness. The principal objective of this study was to test whether the probability of use of significant police force or severe police force on mentally ill citizens had decreased during the implementation of a Settlement Agreement.  To calculate changing probabilities, that is, changing rates of force per opportunity to use force, I sought to identify a denominator that would capture and control for changes the number of opportunities to use force against mentally ill civilians, and a comparable numerator that captured the number of force events imposed on mentally ill civilians.  For the denominator, I found a public dataset describing police dispatches resulting from public requests for service.  For the numerator, I found a public dataset that summarized police reports of use of force. The remaining challenges were to combine the force-reports of individual officer's actions into composite descriptions of force-incidents (total applications of force against an individual person at one time and place), and to identify the subsets of service-requests and force-incidents that were likely to involve citizens impaired by mental illness.
+
+
+**Data Sources.**  I downloaded two datasets from the official website of the Portland (Oregon) Police Bureau.  The first, the Officer Report Dataset, is a dataset containing cumulative internally edited results of individual officers' reports, called Force Data Collection Reports (FDCRs), that each officer who participates in the use of substantial force against a civilian is required to complete for each such incident.  The Bureau excluded incidents during which officers discharged a firearm or killed a civilian from the Officer Report Dataset, and also incidents that occurred during Black Lives Matter demonstrations, which continued for many months in 2020 in Portland.  Some additional reports might have been excluded for undisclosed reasons.  Reports were audited xxxxxxxxxxxxxxxxxx. The Officer Report dataset went back the Fall of 2017 but I excluded data from 2017 because categorization of use of force changed starting in 2018, making comparisons of severity of force impossible across that boundary, and because 2017 data contained errors and missing values that appear to have arisen from problems with start-up.  My original tests of hypotheses used data through 3rd Quarter, 2021, but I updated the work to include four full years once 4th Quarter, 2021, data were posted in April, 2022.  The ds contained nnn reports...
+
+The second dataset, the 911 Dispatch Dataset, is a series of annual datasets that report police dispatches initiated by the Portland Bureau of Emergency Communications (BOEC) as a result of calls to 911 by members of the public.  The Dispatched dataset contained nnn reports.....
+
+The two public datasets were not prepared for easy linkage but they share some variables.  Of relevance to this report, only matching by month was possible because the Officer Report Dataset contains year and month but not a numerical date.  The Officer Report Dataset contains an indicator that the incident was triggered by a 911 dispatch, so force-incidents triggered by dispatches could be separated out.  Seventy-six percent of force incidents arose from 911 dispatches. Both datasets contained variables that use an identical typology to categorize each dispatch into one of 44??? kinds.  The textstrings in the Officer Report Dataset were copied from from BOEC's dispatch messages.
+
+The Report Dataset often contain multiple officer-reports pertaining to the same use-of-force incident.  To study use of force per civilian and per incident, I created an Incident Dataset that combined Officer Reports per incident into summary descriptions of the incident.  (Officer reports could be linked by incident-identification numbers that were included in the Report Dataset.  Individual civilians were also given anonymized identifier numbers and these IDs were maintained across incidents, as were anonymized officer IDs.)  ## incidents from ## reports, mean xx per incident.  distribution in online appendix xxx.  
+
+**Identification of Mentally Impaired Citizens.**  The Officer Report Dataset contained separate fields in which officers could record that, "prior to force being used, the subject was perceived by the officer to be undergoing a mental health crisis," "under the influence of drugs," and/or "under the influence of alcohol." https://www.portland.gov/police/open-data/ppb-use-force-dashboard#toc-metadata-for-use-of-force-dashboard  These perceptions cannot have been diagnostic but they do provide an indication of mental impairment.  
+
+The Dispatch Dataset contained no indication of mental or substance impairment.  To create a denominator for the calculation of rates of force among encounters with persons likely to be mentally impaired, I studied the Report Dataset to see the dispatch types for which he observed number of citizens perceived as being in mental crisis were substantially greater than expected.  I did the same for persons perceived to under the influence of drugs other than alcohol, and for persons perceived as alcohol-inebriated.  
+
+**Categorization by Severity of Force.**  
+	
+(1)  So that tests of statistical significance will be meaningful, I stated in advance (and posted beforehand on the internet) two primary hypotheses and said exactly how I would test them.  The two hypotheses are:
+(a)  since 2017, the RATE of use of force by the Portland Police Bureau has decreased among citizens likely to be mentally impaired;
+(b)  since 2017, the RATE of use of SEVERE force has decreased against citizens likely to be mentally impaired.  
+(2)  The datasets I used were downloaded in early January, 2022, from the PPB’s own website.  These are (a) a dataset describing most of the use of force reports (Force Data Collection Reports, FDCRs) submitted by PPB officers since late 2017, and (b) datasets describing police dispatches by the Portland Bureau of Emergency Communications (911) dating back to 2012.  My understanding is that the use-of-force dataset is the same dataset that the Compliance Officer/Community Liaison (COCL) and the Bureau draw on for their own reports.
+(3)  I created a new citizen-level (incident-level) dataset from the FDCR reports.  This is important because a use-of-force incident on one civilian may often involves actions by several officers.  Only civilian-level / incident-level data can accurately describe the impact on citizens, and shed clear light on the constitutionality of the Police Bureau’s use of force.
+(4)  I tested the CHANGE in the RATE of use of force PER DISPATCH.  Simple counts of uses of force are uninformative, even when they change over time.  One would prefer to know about changes in the likelihood the officers impose force when they have the opportunity.  Many factors change the number of opportunities that officers experience, including epidemics and the policies devised to curb them, changes in crime rates, changes in population size and demographics, and change in people’s willingness to report crimes and seek police help.  Fortunately, the large majority of police encounters with civilians start with 911 dispatches.  To test the primary hypotheses, I matched force events to dispatches, then calculated rates per dispatch, which is to say, the probability of substantial or severe force given a dispatch.
+(5) I focused on the dispatch categories that are most likely to involve the mentally impaired.  This allowed me to address the original intent of the Settlement Agreement, the protection of the mentally ill from excessive force.
+Now on to the RESULTS.  
+ 
+  
+
+	Lethal events
+	Officially reported use of force incidents
+	Etc. 
+		Controlled for rate of complaints by dividing by dispatches
+		Focused mental health by isolating call types likely to be MH
+		Tracked severity by creating an index
+		Controlled for other things by looking at change over time
+		Compared mental to non-mental populations
+	Prespecified H’s.  
+	Attempts to explain findings—does the slope change?
+
+RESULTS
+	Counts against dispatches
+	
+	The first primary hypothesis, that the rate of use of force on the mentally impaired has decreased, was not confirmed.  After controlling for the number and type of dispatches, I found no statistically significant change the rate of use of force.  In fact, I observed a slight increase.  
+A graph of rates of significant force per dispatch by month since 2017 is shown in Figure 1.  The average rate per month jumps around because of randomness--there are only about 60 use-of-force events for every 2500 dispatches.
+	
+	Internal trends from force event reports
+	 Attempts to explain increased severity and lack of change
+		More weapons?
+		Sicker subjects?  We have national mortality changes. 2020 only?  Desire to be arrested for food, shelter, treatment?  Compare changes across categories: why faster in mental health?
+		Change in officer behavior?  Earlier severity?  # officers?  # blows?  Do officers treat mental health differently?
+		Change in force technologies employed?  Taser? Gas?
+		Change in policies?  Other PPB comments?
+		
+
+DISCUSSION
+	Disappointing findings
+	Increase in severity appears to arise from xxxx?
+	Lack of drop in rates arises from ???
+	What is force?  The possibility, the threat, the injury, the death?
+		Does sub-lethal force predict killing?
+		
+	Need body camera data
+	Need qualitative research

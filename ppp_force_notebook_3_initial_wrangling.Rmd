@@ -1,0 +1,1909 @@
+---
+title: 'PPB Use of Force Data: Upload, Inspection and Recoding'
+author: "Jonathan Brown"
+output:
+  html_document:
+    df_print: paged
+---
+*NOTE: This document is in RMarkdown "notebook" format.  An RMarkdown notebook is like a laboratory or data scientist's working notebook, but much better: it can include executable code and show or calculate the results of that code's execution.  (Unlike other RMarkdown types, which run all the code in a document while rendering into html (or some other output format), notebook-code can be executed and re-executed chunk by chunk as you write a notebook.  This means, however, that notebooks cannot contain fancy formatting like headers and tables of contents.)  Any reader can completely verify in every detail the work described herein.  Analysts can perform their work ** *within* ** *this document, and their documentation will be automatic as the work is done.  Collaborators can work together on the same notebook.  (Please add your name to the author list in the header if you contribute.)  We use GITHub for version control of this notebook.  Anyone can find this notebook on GitHub.*
+
+**About the PPB Use of Force Dataset**
+
+According to the Portland Police Bureau's Open Data website, the Bureau's Use of Force dataset describes every encounter between a police officer and a person during which force was used.  District policy requires officers to submit a use of force report (FDRC--Force Data Collection Report) after every occasion that they use force on a person.  Each such report is then reviewed and approved by supervisors, up to and including the chief's office. At some point in this review, an AAR (After Action Report) is completed.  
+
+There is an audit process that monitors this approval process.  (The approval process is used for supervision of officers, not merely to create accurate reports.)
+
+*QUESTION FOR PPB: How many FDRC are not approved, what happens to them, and are data describing events in prior quarters retroactively added to the force database when approval has been delayed?  Note that PPB releases its use of force dataset as one, cumulative file containing force events since 1 Jan 2017.*  
+
+Once reports have final approval, analysts Inspector and Audit Team, Office of the Inspector General, reporting to the Chief of Police. enter data from each use-of-force report "by hand" into a spreadsheet.   
+
+The unit of analysis (each row of the dataset) is one encounter between one officer and one person.  An encounter can include up to 8 separate interactions involving police force, each of which can be a different kind of force (baton, take-down, taser, firearm, etc.) If more than one officer used force against the same person at the same time/event, each officer submits their own report.  Thus, the dataset contains as many rows as there were times that an officer used force.
+
+*NOTE FOR LATER: We will want to create a different data.frame in which the observations are events.  Prob. also a data.frame by person.*
+
+Officers and subjects are not named or otherwise personally identified, but each officer and each subject is assigned a seemingly permanent random number in the data. This means that an officer, although anonymous, can be associated with multiple use-of-force events within the data. The same goes for subjects/persons.  Also, PPB has tagged each force event with a unique random ID number.
+
+*QUESTION FOR PPB: Are these IDs truly permanent?  Exactly how are they assigned?  How reliable are the subject IDs?*
+
+Encounters involving use of deadly force are not included in this dataset.  The Bureau publishes a separate list of lethal force events.
+
+*QUESTION FOR PPB: Where can we obtain copies of the use of force reports for the events involving lethal force, so that we can add them to this data.frame, using the same coding?*
+
+There are several data elements available on the PPB interactive use of force Dashboard (https://www.portlandoregon.gov/police/article/695905) that were not included in the downloadable use of force dataset.  For example, calls for medical assistance and reasons for such calls; officer's previous familiarity with civilian; number of officers on the scene...  
+
+*QUESTION FOR PPB: COULD A DATASET WITH THESE ADDITIONAL VARIABLES (AND POSSIBLY OTHERS) BE MADE AVAILABLE IF IT WOULD MATERIAL IMPROVE ANALYSES?*
+
+**Terminology**
+
+I propose to use the following words when working with use-of-force data. (Let's see if I can do this consistently ;-) )
+
+* **interaction** * A single use of force, such as a takedown or a taser shot, applied by one officer to one civilian.
+
+* **encounter** * All the forceful interactions that occurred between one officer and one civilian at one time and place.  This is the unit of analysis in the PPB use of force dataset.
+
+* **incident** * The combination of all *encounters* between all involved officers and *one* civilian at the same time and place.
+
+* **event** * The totality of all the *incidents* that occurred at the same time and place, that is, the sum of all forceful encounters with *all* civilians at a particular time and place.
+
+*QUESTION FOR PPB: Does this terminology match PPB terminology, or how can we change it to better match theirs?*
+
+
+**Data Wrangling Packages (Programs)**
+
+The primary packages we will use for data wrangling are those included in the "tidyverse" collection of R packages.  In addition, "lubridate" is used to handle dates and times.  The "psych" package is used to generate some descriptive stats.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+```
+
+
+**Upload the Dataset**
+
+The PPB use of force dataset is available for download via the Dashboard for the PPB Use of Force Report at https://public.tableau.com/views/ForceAuditReport/DownloadOpenData?%3AshowVizHome=no.  The dataset below is J Brown's download on about 1 Jan 2022, which he named, "UseOfFOrce".  The PPB force dataset is updated quarterly about 45 days after the close of the previous quarter, according to the PPB website.  These updates include changes to previous quarters based on updated or new added forceful interactions.  It does not appear to be possible to automated the download process from within this script.  
+
+No date of download is included in the dataset name or used in this script.  This allows the script to run on new data with little or no editing, BUT users must be careful to understand which version of the data they are using. 
+
+*NOTE: Remember to store every quarter's revision of the dataset in an archive so that analyses stay matched to the correct dataset, and so that retroactive revisions can be identified, if desired.*
+
+**How many officer-person interactions (observations) are in this dataset?**
+
+```{r}
+UseOfForce <- read_csv("UseOfForce.csv")
+UseOfForce %>%
+  summarise(n())
+```
+
+**Variable Names - Raw .csv**
+
+Let's take a look at the variable names (column headers) in the use of force dataset as downloaded (into a .csv file that I named "UseOfForce") from the PPB Open Data webpage:
+
+```{r}
+ls(UseOfForce)
+```
+
+These original variable names are not well suited to wrangling and analysis in R.  We need brief, lower-case names with no special characters that follow R-useful naming conventions, such as using underscore for modifiers, _f for factors, similar vars grouped together using identical early-character sequences, etc.  The following code replaces the raw varnames. It also creates a new data.frame, which will be the one I continue to clean and modify, leaving the original downloaded .csv as is, with its original varnames.
+
+```{r}
+library(dplyr)
+ppb_force <- UseOfForce %>%  
+  rename(
+    threat_blunt_raw = "Blunt Object",                                                      
+    incid_force_lev_raw = "Category of Force Event - Measured at Event Level",                   
+    incid_disp_raw = "Disposition/Custody",                                                 
+    incid_day_raw = "DOW",                                                                 
+    threat_gun_raw = "Firearm",                                                             
+    threat_gun_implied_raw = "Firearm - Implied",                                                   
+    threat_gun_replica_raw = "Firearm - Replica",                                                   
+    force1_raw = "Force Applied - 1",                                                   
+    force2_raw = "Force Applied - 2",                                                   
+    force3_raw = "Force Applied - 3",                                                   
+    force4_raw = "Force Applied - 4",                                                   
+    force5_raw = "Force Applied - 5",                                                   
+    force6_raw = "Force Applied - 6",                                                   
+    force7_raw = "Force Applied - 7",                                                   
+    force8_raw = "Force Applied - 8",                                                   
+    incid_sixhour_raw = "Hour (6Hr)",                                                          
+    call_group_raw = "Initial Call Category",                                               
+    call_detail_raw = "Initial Call type",                                                   
+    threat_knife_raw = "Knife / Edged Weapon / Stabbing Instrument",                          
+    civil_mental_raw = "Mental Health Crisis - Prior to Force, Perceived Lack of Compliance", 
+    incid_month_raw = "Month",                                                               
+    threat_biohaz_raw = "Needle / Spit / Bodily Fluids",                                       
+    threat_unarmed_raw = "No weapon (unarmed)",                                                 
+    officer_id_raw = "Officer",                                                             
+    officer_precinct_raw = "Officer Precinct",                                                    
+    officer_tenure_raw = "Officer Tenure",                                                      
+    threat_other_raw = "Other Weapon",                                                        
+    recordcount_1_raw = "Record Count...48",                                                   
+    recordcount_2_raw = "Record Count...49",                                                   
+    incid_id_raw = "Record ID",                                                           
+    civil_id_raw = "Subject",                                                             
+    civil_race_raw = "Subject - Race",                                                      
+    civil_sex_raw = "Subject - Sex",                                                       
+    civil_transient_raw = "Subject - Transient",                                                 
+    civil_age_raw = "Subject Age",                                                
+    civil_instance_raw = "Subject Instance",                                                    
+    resist1_raw = "Subject Resistance - 1",                                              
+    resist2_raw = "Subject Resistance - 2",                                              
+    resist3_raw = "Subject Resistance - 3",                                              
+    resist4_raw = "Subject Resistance - 4",                                              
+    resist5_raw = "Subject Resistance - 5",                                              
+    resist6_raw = "Subject Resistance - 6",                                              
+    resist7_raw = "Subject Resistance - 7",                                              
+    resist8_raw = "Subject Resistance - 8",                                              
+    call_source_raw = "Type of Call",                                                        
+    civil_etoh_raw = "Under the Influence of Alcohol - Prior to Force, Perceived Condition",
+    civil_drug_raw = "Under the Influence of Drugs - Prior to Force, Perceived Condition",  
+    threat_unused_weapon_raw = "Weapon Present or reported but not used or threatened use",           
+    incid_year_raw = "Year"                                                                
+  )
+```
+
+Did this work?
+
+```{r}
+ls(ppb_force)
+```
+
+Looks like it worked!  I sorted the vars into classes depending on what was described.  I constructed somewhat long varnames so that tables and other output could be more easily understood.  Common prefixes and suffixes should help with slicing, dicing, and mixing later on.  
+
+Because I know that I will need to modify the values in almost all these variables to make them valid for statistical analysis, I added the suffice, "_raw", to all of them.  Then, I can remove this suffix to create simpler varnames for downstream work.
+
+Here is a summary (omitting the _raw suffix):
+
+* **civilian** * (characteristics of the person on whom force was applied). These varnames start now all start with "civil_": *civil_race, civil_mental, civil_etoh, civil_drug, civil_age, civil_id, civil_instance, civil_sex*.  (The original PPB data uses the term, subject, but "civilian" feels more neutral.) The data-level is the encounter, not the person on whom force was used, because each officer records these data separately in their use-of-force report, and different officer's reports might not agree.  For example, officers might differ in their perception that a civilian was experiencing a mental health crisis.
+
+* **officer** * (characteristics of the officer). These varnames start with "officer_": *officer_precinct, officer_tenure, officer_id*.
+
+* **force** * (type of force applied)  Up to 8 types of force can be entered per officer per person per event/incident, in sequential order, i.e., first to last.  These varnames start with "force": *force1, force2, ... force8*. The values are textstrings describing the type. There is also *forcelev*, which is PPB's assessment of the highest level of force applied by the officer during the interaction. 
+
+* **resistance** * (type of resistance used by the person)  Like force, up to 8 sequential types: *resist1, resist2, ... resist8*.  The values are textstrings describing the type.    
+
+* **threat** *(type of weapon or other threat possessed or used by the civilian, or the absence thereof)  These are yes/no variables, the varname indicates the type: threat_biohaz, threat_blunt, threat_gun, threat_gun_implied, threat_gun_replica, threat_knife, threat_other, threat_passive, threat_unarmed. Note that threat includes info from the 911 dispatcher describing what weapon the civilian was thought to have, i.e., the threat as perceived by the officer as they entered the scene, as well as weapons the civilian actually did have.
+
+* **call** * (characteristics of the "call" that caused the officer to encounter the civilian at the event)  These varnames start with "call_". *call_group, call_detail, call_source*.  These data are recorded at the officer/encounter level, because different involved officers might have received different calls.
+
+* **incident** * (descriptors at the incident level--one civilian, one of more officers)  These include the time, the day, the month, the year, and the randomly assigned ID number.  Let's start these with "incid_".  *incid_day, incid_month, incid_year, incid_sixhour, incid_disp, incid_id*. These vars are at the level of the civilian/incident, because many officers might have used force on the civilian.
+
+*NOTE FOR LATER: Do we want to make some of these global variables so that if we change varnames for some reason, all the downstream analysis code can be automatically corrected?  Is that even possible?*
+
+**CREATE PERMANENT RAW PPB USE OF FORCE DATASET WITH UPDATED VARIABLE NAMES**
+
+Note:  Because PPB force datasets updated quarterly (and retroactively), "permanent" datasets should be identified by the quarter and year of their most recent data.  ALSO, THE FOLLOWING CODE CHUNK MUST BE EDITED TO REFLECT THE NEW QUARTER AND YEAR WHENEVER THIS SCRIPT IS RUN ON NEW DATA.  (to find code that needs quarterly modification, search on "update me")
+
+```{r}
+ppb_force_q321 <- ppb_force
+```
+
+
+**DATA INSPECTION AND CLEANING**
+
+Most of the rest of this script looks at the values in each variable and makes changes to eliminate impossible values and make the variable suitable for analysis.  
+
+Most of these variables contain values that are categorical.  They take the form of text strings that appear to have been copied directly from the data masks / precodes that were programmed into the officers' reporting software or printed on their paper reporting forms.  
+
+Let's list out the values for each variable and fix any problems, such as text strings that R can't process, missing values, and awkward factor orderings.  Let's also convert text values to numerical values whenever appropriate, to facilitate analysis later on.  We will also want to define the resulting numerically-valued variables as "factors" so that R does not treat them later as measured variables.
+
+*QUESTION FOR PPB: Are the use-of-force reports completed on paper or electronically?  Has this changed over the years?*
+
+Let's go alphabetically...
+
+**"call_detail"        **
+
+```{r}
+ppb_force %>%
+  group_by(call_detail_raw) %>%
+  summarise(n())
+```
+117 different types of "calls" lead to force encounters. Many call categories are divided into "cold" and "hot" varieties.  Many call end with the string, "*H," which appears to mean super-high priority: most of the H calls involve a report of person with a weapon.  There are only 6 encounters with a missing variable (NA) for call_detail.  
+
+Most call_detail strings are self-explanatory.  "ECIT" means a call to the Enhanced Crisis Intervention Team, which is a group of "volunteer officers from a variety of patrol assignments... [who]... respond to crisis calls that are determined to be related to an individual with mental illness. ECIT officers receive additional training in order to; identify risks during a behavioral crisis, utilize crisis communication techniques to help deescalate a person in crisis, and have knowledge of available community resources." (The quote is from https://www.portlandoregon.gov/police/article/784641, which contains useful additional info about the number of ECIT and other behavioral health calls that result in use of force.)
+
+Later analyses can take advantage of the detail in this variable.  (call_group, see below, is as PPB-generated variable that provides one such categorization of call_detail values.)  For now, I will simply change the 6 NAs to "unknown," so as to preserve these cases for future analyses.
+
+```{r}
+  library(tidyr)  
+  ppb_force$call_detail_raw[is.na(ppb_force$call_detail_raw)] <- "UNKNOWN"
+  ppb_force %>%
+    group_by(call_detail_raw) %>%
+    summarise(n())
+```
+This worked.  (Note that this code chunk permanently changes the ppb_force dataset.  So, if you run it again, it will look like it worked again but actually here are no NAs to convert anymore so the code does nothing.  summarize() will show the correct outcome but that is the result of the first time the code was run.)  
+
+Now create the permanent variable for analysis:
+
+```{r}
+ppb_force$call_detail <- ppb_force$call_detail_raw
+```
+
+```{r}
+ppb_force %>%
+    group_by(call_detail_raw, call_detail) %>%
+    summarise(n())
+```
+
+**"call_group"     **
+
+```{r}
+ppb_force %>%
+  group_by(call_group_raw) %>%
+  summarise(n())
+```
+117 values now collapsed down to 41.  Modifiers like "COLD," "PRIORITY," AND "\*H" have been combined.  Again, 6 NAs, inherited presumably from *call_group_raw*.  I will replace these with "unknown"
+```{r}
+ppb_force$call_group_raw[is.na(ppb_force$call_group_raw)] <- "UNKNOWN"
+ppb_force %>%
+  group_by(call_group_raw) %>%
+  summarise(n())
+```
+Success!  Now create the perm var:
+
+```{r}
+ppb_force$call_group <- ppb_force$call_group_raw
+```
+
+
+
+**"call_source"    **
+
+```{r}
+ppb_force %>%
+  group_by(call_source_raw) %>%
+  summarise(n())
+```
+No NAs.  Later, we are going to want to compare these force data against the PPB dataset describing all dispatches, so we will want to select on "Dispatched.  Create a dispatched y/n var now?  Rename the strings to R format?  There are only three unique values, so leave as is for now.
+
+Convert to perm var:
+
+```{r}
+ppb_force$call_source <- ppb_force$call_source_raw
+```
+
+
+
+
+**"civil_age"  **
+
+Civilian age is a measured variable.  For analysis, we will sometimes want to group age into categories. To facilitate comparison, we could use the came categories as PPB.  Missing data here are truly missing; they cannot be imputed or assumed to take a "no" value.  PPB dashboard as of 20-1-22 says 2.0% are "undetermined" for the entire cumulative force dataset.  Looking the cumulative data in Excel, I found 5 subjects with ages less than zero, 6 less than one year, then valid looking ages between 7 and 75, then 30 subjects aged 117-118, then 109 blank cells. My guess is that the ages were calculated from date-of-birth entries on the paper force-reporting form. If so, the weird age values could be the result of mistakes made when entering dates, either by officers or by analysts who keyed in the data.
+
+I propose to recode to NA every value that is blank, below age 7, and above age 99.  This is about 2.1% of cases, comparable to the 2% that PPB show as "undetermined" on their dashboard.
+
+*QUESTION FOR PPB: Does our procedure match your procedure?  Is our explanation about right?*
+
+So first we need to create a clean data column with the impossible values changed to blank or NA.  
+
+Then, let's create a factor (ordinal grouping) from these data and see how many cases have missing or string data on the age var.
+
+
+```{r}
+ppb_force$civil_age_raw <- replace(ppb_force$civil_age_raw, ppb_force$civil_age_raw < 7, NA)
+ppb_force$civil_age_raw <- replace(ppb_force$civil_age_raw, ppb_force$civil_age_raw >= 99, NA)
+
+#nextline sorts by age.  if want descending, type - before varname.  can list multiple sorting vars.
+ppb_force <- ppb_force[order (ppb_force$civil_age_raw),]
+
+#shows the last 200 rows, most of which should be NAs, and the remainder the oldest civilians
+tail(ppb_force$civil_age_raw, n = 200L)
+```
+
+
+```{r}
+#shows the first few rows, which should start with age 7
+head(ppb_force$civil_age_raw, n = 50L)
+```
+This appears to have worked. Last values in the civil_age_raw are NA, and first values start at age 7, as intended.
+
+Create the perm var:
+
+```{r}
+ppb_force$civil_age <- as.numeric(ppb_force$civil_age_raw)
+```
+
+
+Now let's collapse the civilian age data down into age groups to match what PPB reports on their website:
+
+
+```{r}
+breaks <- c(7, 14, 24, 34, 49, 64, 99)
+ppb_force$civil_age_f <- cut(ppb_force$civil_age_raw, breaks, 
+  labels = c(
+        "0-14", "15-24", "25-34", 
+       "35-49", "50-64", "65+"))
+ppb_force %>%
+  group_by(civil_age_f) %>%
+  summarise(n())   
+```  
+That worked.  Nice to see that the NAs get carried along but do not interfere with the factoring.
+
+Let's make sure that the new variable civil_age_f is now in the dataframe:
+
+```{r}
+ls(ppb_force)
+```
+It's there.
+
+
+
+
+**"civil_drug"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_drug_raw) %>%
+  summarise(n())
+```
+Generally, the data show either Yes or NA.  I believe that the early (2017) data gathering was on paper and "No" was then an option.  Later, it was either Yes or NA.  I will change the No and NA/blank to 0 and Unclear and Yes to 1.
+
+```{r}
+#temp <- ppb_force    #CREATED temp DF to TEST THIS ROUTINE
+#ls()
+#rm(temp)
+#ls()
+ppb_force$civil_drug_raw <- replace(ppb_force$civil_drug_raw, ppb_force$civil_drug_raw == "Unclear", 1)
+ppb_force$civil_drug_raw <- replace(ppb_force$civil_drug_raw, ppb_force$civil_drug_raw == "Yes", 1)
+ppb_force$civil_drug_raw <- replace(ppb_force$civil_drug_raw, ppb_force$civil_drug_raw == "No", 0)
+ppb_force$civil_drug_raw <- ppb_force$civil_drug_raw %>% 
+  replace_na(0)
+
+ppb_force %>%
+  group_by(civil_drug_raw) %>%
+  summarise(n())
+```
+Success!  Now make the perm var:
+
+```{r}
+ppb_force$civil_drug <- ppb_force$civil_drug_raw
+```
+
+
+*NOTE FOR LATER: MIGHT WANT TO COME BACK AND ADD LABELS TO THESE NUMERIC VALUES, AND POSSIBLY ADD LONG DESCRIPTIVE LABELS A LA THE PPB VARNAMES TO THE VARS.  FOR INSTRUCTION SEE: https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html*
+
+
+**"civil_etoh"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_etoh_raw) %>%
+  summarise(n())
+```
+Need to change as above for civil_drug.
+
+```{r}
+#ppb_force$civil_etoh_raw <- replace(ppb_force$civil_etoh_raw, ppb_force$civil_etoh_raw == "Unclear", 1)
+ppb_force$civil_etoh_raw <- replace(ppb_force$civil_etoh_raw, ppb_force$civil_etoh_raw == "Yes", 1)
+ppb_force$civil_etoh_raw <- replace(ppb_force$civil_etoh_raw, ppb_force$civil_etoh_raw == "No", 0)
+ppb_force$civil_etoh_raw <- ppb_force$civil_etoh_raw %>% 
+  replace_na(0)
+
+ppb_force %>%
+  group_by(civil_etoh_raw) %>%
+  summarise(n())
+```
+Now make the perm var:
+
+```{r}
+ppb_force$civil_etoh <- ppb_force$civil_etoh_raw
+```
+
+
+**"civil_id"    **
+
+*civil_id.raw* is numeric, although the numbers are said to have been randomly assigned, so they lack cardinal meaning.  In other words, the number is the same as an anonymised name.  Looking in Excel, there are a few cases with peculiar numbers, like 1, 2, 3, 11111.  These are all from 2017 and I assume that they represent early entries into the dataset before the random ID generation program was set up.  I see no reason to exclude civilians with these numbers, as they are all unique.  
+
+Looking in Excel, I also found 7 blank cells.  These could to be replaced with some invented number.  However, I note that these blank cases also have ages of 117 and 118, and no time of day values.  They come from Q4 2017.  So, perhaps they should be excluded.  Let's ask PPB analysts. **For now, I will make no change.**
+
+*QUESTION FOR PPB: What about these 7 cases with blank IDs?  And the cases with peculiar ID numbers?*
+
+To make perm var:
+
+```{r}
+ppb_force$civil_id <- as.numeric(ppb_force$civil_id_raw)
+```
+
+
+
+**"civil_instance"**  
+
+According PPB metadata description on their website, *civil_instance* is an "Unique identifier combining randomly generated subject number and randomly generated record number for purposes of calculations."  I do not as yet understand the purpose of this variable. 
+
+```{r}
+head(ppb_force$civil_instance_raw, n = 100L)
+```
+
+This is a peculiar variable.  Need to ask PPB what it is.  I note that the 7 cases missing for *civil_id* are also missing for this variable.
+
+QUESITON FOR PPB: WHAT IS THE VARIABLE YOU CALL "SubjectInstance" AND HOW IS IT USED?*
+
+For now, I will make the var permanent:
+
+```{r}
+ppb_force$civil_instance <- as.numeric(ppb_force$civil_instance_raw)
+```
+
+
+
+**"civil_mental"    ** 
+
+Here is how PPB defines a mental health crisis (source: PPB Directive 1010.00, https://www.portlandoregon.gov/police/article/751998   "Mental Health Crisis:  An incident in which someone with an actual or perceived mental illness experiences intense feelings of personal distress (e.g., anxiety, depression, anger, fear, panic, hopelessness), a thought disorder (e.g., visual or auditory hallucinations, delusions, sensory impairment or cognitive impairment), obvious changes in functioning (e.g., neglect of personal hygiene) and/or catastrophic life events (e.g., disruptions in personal relationships, support systems or living arrangements; loss of autonomy or parental rights; victimization or natural disasters), which may, but not necessarily, result in an upward trajectory of intensity culminating in thoughts or acts that are dangerous to self and/or others."
+
+PPB defines mental illness thusly (same source):  "Mental Illness:  Health conditions that are characterized by alterations in thinking, mood, or behavior (or some combination thereof) associated with distress and/or impaired functioning. Alterations in thinking, mood, or behavior contribute to a host of problems-patient distress, impaired functioning, or heightened risk of death, pain, disability, or loss of freedom." 
+
+For most interactions in the PPB force dataset, nothing about mental status is recorded (value = NA) but if an officer perceives mental illness, value = Yes.  In some few cases, an officer explicitly recorded seeing no sign of mental crisis.  In an additional few cases, the officer was uncertain.  (These values of "uncertain" and "no" are said to have been recorded only in earlier years before the data "mask" (the force-reporting form) was changed.  
+
+Expert opinion is that mental problems are often missed by officers.  Certainly, the rates at which mental illness is perceived by officers is much lower in these data than studies of mental illness prevalence have estimated.  It would be impossible even for a psychiatrist during a brief, stressful encounter to diagnose a mental illness.  
+
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_mental_raw) %>%
+  summarise(n())
+```
+This perception of mental status variable needs to be re-coded so that both NA and No count as No and set equal to 0.  I also propose to include the cases labeled "unclear" as Yes, as I did with *civil_etoh_raw*.  This "unclear" category has too few cases to support much analysis on its own and is presumably irretrievably confounded with year of interaction.
+
+By changing this var and others to 0,1 values we can more easily sum up data when multiple officers are involved, or multiple citizens are involved.
+
+```{r}
+ppb_force$civil_mental_raw <- replace(ppb_force$civil_mental_raw, ppb_force$civil_mental_raw == "Unclear", 1)
+ppb_force$civil_mental_raw <- replace(ppb_force$civil_mental_raw, ppb_force$civil_mental_raw == "Yes", 1)
+ppb_force$civil_mental_raw <- replace(ppb_force$civil_mental_raw, ppb_force$civil_mental_raw == "No", 0)
+
+#THIS IS THE CODE THAT WORKED FOR ETOH AND DRUG.
+ppb_force$civil_mental_raw <- ppb_force$civil_mental_raw %>% 
+   replace_na(0)
+```
+```{r}
+ppb_force %>%
+  group_by(civil_mental_raw) %>%
+  summarise(n())
+```
+Now make a permanent newvar:
+```{r}
+ppb_force$civil_mental <- ppb_force$civil_mental_raw
+```
+```{r}
+ppb_force %>%
+  group_by(civil_mental) %>%
+  summarise(n())
+```
+
+**"civil_race"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_race_raw) %>%
+  summarise(n())
+```
+Interesting that there are very few missing values for "race."  "Unknown" is too small a category to be useful in analysis so best to change it to NA.
+
+Technically, Hispanic is not a race.  There is also no category for mixed races, which are common in the population.  Census-style racial and ethnic categories are difficult to ascertain without explicitly asking a person about their race and hispanic/other heritage. On the other hand, this coding matches well with popular and racist typologies of "race," which makes it the best choice in the present context. 
+
+```{r}
+ppb_force$civil_race_raw <- replace(ppb_force$civil_race_raw, ppb_force$civil_race_raw == "Unknown", NA)
+```
+```{r}
+
+ppb_force %>%
+  group_by(civil_race_raw) %>%
+  summarise(n())
+```
+That worked.  Will probably want to collapse these cats for some analyses, later.  The following code creates the permanent variable:
+
+```{r}
+ppb_force$civil_race <- ppb_force$civil_race_raw
+```
+
+
+
+**"civil_sex"     **
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_sex_raw) %>%
+  summarise(n())
+```
+
+No a priori reason to think that unknown sex means transgender or something other than simply not recorded.  Will change "Unknown" into NA unless PPB advises otherwise.
+
+```{r}
+ppb_force$civil_sex_raw <- replace(ppb_force$civil_sex_raw, ppb_force$civil_sex_raw == "Unknown", NA)
+```
+
+```{r}
+ppb_force %>%
+  group_by(civil_sex_raw) %>%
+  summarise(n())
+```
+Success!  Now create permanent variable:
+
+```{r}
+ppb_force$civil_sex <- ppb_force$civil_sex_raw
+```
+
+
+*QUESTION FOR PPB: DOES UNKNOWN MEAN ANYTHING OTHER THAN MISSING?*
+
+
+**"civil_transient" ** 
+
+According to PPB presentation to Training Advisory Committee at Jan 2022 meeting, people are coded transient if PPB has no address for them (on the paper forms filled out by officers, presumably).  Therefore, it needs consultation with PPB to understand how many false positives there may be in this variable.  
+
+*QUESTION FOR PPB: How accurate are the transient data?*
+
+
+```{r}
+ppb_force %>%
+  group_by(civil_transient_raw) %>%
+  summarise(n())
+```
+
+Hard to say what "Unknown" signifies.  This value occurs in every year about equally.  Will change "Unknown" to NA. 
+
+```{r}
+ppb_force$civil_transient_raw <- replace(ppb_force$civil_transient_raw, ppb_force$civil_transient_raw == "Unknown", NA)
+```
+```{r}
+ppb_force %>%
+  group_by(civil_transient_raw) %>%
+  summarise(n())
+```
+Success.  Now make a permanent var:
+
+```{r}
+ppb_force$civil_transient <- ppb_force$civil_transient_raw
+```
+
+
+**"incid_force_lev"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_force_lev_raw) %>%
+  summarise(n())
+```
+
+These are force level codes applied by officers and their supervisors to indicate the severity of force applied.  The PPB variable name in full is "Category of Force Event - Measured at Event Level."  This, then is the highest level of force used by any of the officers who were involved in an encounter, i.e., against any one civilian at one time and place.  
+
+Encounters of force level = "I" do not appear in the dataset: Level I's are encounters in which lethal force was threatened or used by an officer, basically, a firearm.  We should find a way to add Level I interactions to this dataset.  There are fewer than 10 Level I encounters per year, per another PPB dashboard, but this should be confirmed.
+
+There are 99 NAs (blanks) and 1 "NULL."  What explains the NAs?  These are all use of force encounters, so in theory there must be a level for each. Are these cases for which a supervising officer could not decide?  Or for which no review by a supervising officer occurred?   
+
+For data analysis we could create an additional category, "UNKNOWN" OR "UNCLEAR".  N for such a cat will not be high enough to allow useful stats, and the meaning will still be undefined.  Alternatively, we could look at the force variables and compute our own assessment, perhaps based on PPB criteria?  The resulting level of force assignments will be noisy: for example, *Takedown*, a very common value is often not broken out by force level, although it usually is (see below).  Of course, force level assignment by various supervisors is noisy in its own ways, also.
+
+If *force_lev* were calculated for each *force1...force8* as a numerical value (inverse to the Roman numerals), it would be possible to construct a numeric sum of the total "force" experienced by a civilian, or applied by an officer or group of officers.  A synthetic force level var would then be the highest of the numbers assigned per interaction, per civilian, or per encounter.
+
+**For now, I will simply recode NULL as NA and seek clarification from PPB.  I will also create an inverse numerical variable for use in incident-level analyses.**
+
+
+*QUESTION FOR PPB: Please provide the hard copy force reports for the Level I encounters so we can enter them ourselves.*
+
+*QUESTION FOR PPB: What is the exact algorithm for assigning a force level?  What explains the missing values?  How should they be handled?*
+
+```{r}
+ppb_force$incid_force_lev_raw <- replace(ppb_force$incid_force_lev_raw, ppb_force$incid_force_lev_raw == "Null", NA)
+```
+
+```{r}
+ppb_force %>%
+  group_by(incid_force_lev_raw) %>%
+  summarise(n())
+```
+
+Now create a permanent force_lev var:
+
+```{r}
+ppb_force$incid_force_lev <- ppb_force$incid_force_lev_raw
+
+ppb_force %>%
+  group_by(incid_force_lev, incid_force_lev_raw) %>%
+  summarise(n())
+```
+
+Now create a newvar, *incid_force_calc*, that gives numerical values to force level:
+
+```{r}
+# the replace() function only works within a var, so must create the newvar first.
+ppb_force$incid_force_calc <- ppb_force$incid_force_lev
+
+ppb_force$incid_force_calc <- replace(ppb_force$incid_force_calc, ppb_force$incid_force_calc == "IV", 1)
+ppb_force$incid_force_calc <- replace(ppb_force$incid_force_calc, ppb_force$incid_force_calc == "III", 2)
+ppb_force$incid_force_calc <- replace(ppb_force$incid_force_calc, ppb_force$incid_force_calc == "II", 3)
+
+#I will put a conversion for force_lev=I in case we can add those observations later
+ppb_force$incid_force_calc <- replace(ppb_force$incid_force_calc, ppb_force$incid_force_calc == "I", 4)
+
+ppb_force %>%
+  group_by(incid_force_calc) %>%
+  summarise(n())
+```
+Success!
+
+**"force1"            **
+
+This is the first of 8 identical *force/n* vars, each of which records a single type of force used at a particular moment, in temporal sequence, i.e., first application of force recorded in *force1*, second in *force2*, etc.  Once no additional force was used, the value for subsequent potential applications is NA.  
+
+There is one mysterious Value = Null in these variables.)
+
+Wrangling Plan: Below, I will display the counts of each force var.  Then, at the end, I will try to mutate these vars into newvars that will allow analyses of total counts of force, counts by level of force, and ultimately counts at the level of the encounter (multiple officers, one civilian) and of the officer (one officer, or summed to precinct, many civilians and encounters).  Later, I will try to write code that will make these mutations simultaneously across all 8 *force/n* variables. Ditto for changing Null to NA.
+
+```{r}
+ppb_force %>%
+  group_by(force1_raw) %>%
+  summarise(n())
+```
+There is 1 value = Null, but no NAs.  This obs deserves inspection as in theory no use of force report should lack a description of the first (and possibly only) kind of force that was used.
+
+The 22 text string values for the force vars are not all self-explanatory...
+
+Aerosol rest.:  tear gas???
+
+Box-in VIS:  Per Directive 1010.00 "Boxing In:  A coordinated tactic of making contact between police vehicles and a subject’s vehicle to stop or prevent the start of a pursuit."  What is VIS?
+
+CEW: Per Directive 1010.00:  "Conducted Electrical Weapon (CEW):  A weapon, including Tasers, designed primarily to discharge electrical charges into a subject that will cause involuntary muscle contractions and overrides the subject’s voluntary motor responses."
+
+CHWI:  Tentatively, based on https://static1.squarespace.com/static/5a319f76a9db0901e16c6433/t/5a72c5b8f9619ac3d252e2a8/1517471195108/Oct+2+Final+COCL+report+appendices.pdf , Control Hold With Injury.
+
+
+Hobble: from an Oregonlive webpage, "a nylon strap that ties a person's ankles together and links them to their wrists handcuffed behind their back. It's a maximum restraint used on combative people"
+
+Impact Muni:  presumably this is beanbags, rubber bullets?
+
+Less Lethal Force:  Per Directive 1010.00, "A force application that is not intended or expected to cause death or serious injury and that is commonly understood to have less potential for causing death or serious injury than conventional, more lethal police tactics.  Nonetheless, use of less-lethal force can result in death or serious injury."  
+
+*QUESITON FOR PPB: WHAT DOES LESS LETHAL FORCE MEAN IN PRACTICAL TERMS IN THESE DATA?*
+
+PFA: ???
+
+PIT - VIS:  Per Wikipedia, "The PIT maneuver (pursuit intervention technique) or TVI (tactical vehicle intervention) is a pursuit tactic by which a pursuing car can force a fleeing car to turn sideways abruptly, causing the driver to lose control and stop".  Not sure what VIS means--vehicle in sight???
+
+Ram - VIS:  ???
+
+Takedown.  Three values appear in the data:  Takedown, Takedown (II and III), and Takedown (IV).  Presumably, the Roman numerals refer to the level of force of the Takedown.  (IV is lowest degree of force.)  Takedown is a vague term.    Takedown without an indication of force means what?  Not assessed?  Uncertain?  Different time period of data collection?
+
+
+
+**"force2"            **
+
+
+
+```{r}
+ppb_force %>%
+  group_by(force2_raw) %>%
+  summarise(n())
+```
+One "Null" here, as well, and many NAs.  NAs make sense because in most interactions, only one form of force was necessary or applied.
+
+
+**"force3"           **
+
+
+```{r}
+ppb_force %>%
+  group_by(force3_raw) %>%
+  summarise(n())
+```
+No more Null value.
+
+
+**"force4"           **
+
+
+```{r}
+ppb_force %>%
+  group_by(force4_raw) %>%
+  summarise(n())
+```
+
+**"force5"           **
+
+
+```{r}
+ppb_force %>%
+  group_by(force5_raw) %>%
+  summarise(n())
+```
+
+**"force6"          **
+
+
+```{r}
+ppb_force %>%
+  group_by(force6_raw) %>%
+  summarise(n())
+```
+
+
+**"force7"            **
+
+
+```{r}
+ppb_force %>%
+  group_by(force7_raw) %>%
+  summarise(n())
+```
+
+**"force8"         **
+
+
+```{r}
+ppb_force %>%
+  group_by(force8_raw) %>%
+  summarise(n())
+```
+First, let's get the Null values into the NA category to create clean permanent *force/n* variables.  
+
+   
+```{r}
+#going against my usual pattern here by creating the perm var BEFORE transforming the raw var.
+ppb_force$force1 <- ppb_force$force1_raw
+ppb_force$force2 <- ppb_force$force2_raw
+ppb_force$force3 <- ppb_force$force3_raw
+ppb_force$force4 <- ppb_force$force4_raw
+ppb_force$force5 <- ppb_force$force5_raw
+ppb_force$force6 <- ppb_force$force6_raw
+ppb_force$force7 <- ppb_force$force7_raw
+ppb_force$force8 <- ppb_force$force8_raw
+
+ppb_force$force1 <- replace(ppb_force$force1, ppb_force$force1 == "Null", NA)
+ppb_force$force2 <- replace(ppb_force$force2, ppb_force$force2 == "Null", NA)
+ppb_force$force3 <- replace(ppb_force$force3, ppb_force$force3 == "Null", NA)
+ppb_force$force4 <- replace(ppb_force$force4, ppb_force$force4 == "Null", NA)
+ppb_force$force5 <- replace(ppb_force$force5, ppb_force$force5 == "Null", NA)
+ppb_force$force6 <- replace(ppb_force$force6, ppb_force$force6 == "Null", NA)
+ppb_force$force7 <- replace(ppb_force$force7, ppb_force$force7 == "Null", NA)
+ppb_force$force8 <- replace(ppb_force$force8, ppb_force$force8 == "Null", NA)
+
+
+```
+
+```{r}
+ppb_force %>%
+  group_by(force1, force1_raw)  %>%
+  summarize(n())
+```
+This worked, as shown by the *force1* example.  
+
+
+Second, let's create vars that indicate whether each potential force "moment" is occupied or blank. First I will create new force vars to record any use of force, rather than what kind of force was used.
+
+```{r}
+
+ppb_force$force1_any <- ppb_force$force1
+ppb_force$force2_any <- ppb_force$force2
+ppb_force$force3_any <- ppb_force$force3
+ppb_force$force4_any <- ppb_force$force4
+ppb_force$force5_any <- ppb_force$force5
+ppb_force$force6_any <- ppb_force$force6
+ppb_force$force7_any <- ppb_force$force7
+ppb_force$force8_any <- ppb_force$force8
+```
+
+For *force1*, because by definition in a use of force dataset, the there must be at least one use of force, even if its nature is not recorded, I will change the former "Null" value to 1.  I will only do this for *force1*.
+
+```{r}
+ppb_force$force1_any <- ifelse(is.na(ppb_force$force1_any), ppb_force$force1_any == "zero", ppb_force$force1_any == "one")
+
+ppb_force$force1_any <- replace(ppb_force$force1_any, ppb_force$force1_any == FALSE, 1)
+
+ppb_force$force1_any <- ppb_force$force1_any %>% 
+  replace_na(1)
+```
+```{r}
+ppb_force %>%
+  group_by(force1_any) %>%
+  summarise(n())
+```
+
+Excellent.  Now repeat this for the other *forceN* vars, except for these NA will be changed to zero:
+
+
+```{r}
+ppb_force$force2_any <- ifelse(is.na(ppb_force$force2_any), ppb_force$force2_any == "zero", ppb_force$force2_any == "one")
+ppb_force$force2_any <- replace(ppb_force$force2_any, ppb_force$force2_any == FALSE, 1)
+ppb_force$force2_any <- ppb_force$force2_any %>% 
+  replace_na(0)
+
+ppb_force$force3_any <- ifelse(is.na(ppb_force$force3_any), ppb_force$force3_any == "zero", ppb_force$force3_any == "one")
+ppb_force$force3_any <- replace(ppb_force$force3_any, ppb_force$force3_any == FALSE, 1)
+ppb_force$force3_any <- ppb_force$force3_any %>% 
+  replace_na(0)
+
+ppb_force$force4_any <- ifelse(is.na(ppb_force$force4_any), ppb_force$force4_any == "zero", ppb_force$force4_any == "one")
+ppb_force$force4_any <- replace(ppb_force$force4_any, ppb_force$force4_any == FALSE, 1)
+ppb_force$force4_any <- ppb_force$force4_any %>% 
+  replace_na(0)
+
+ppb_force$force5_any <- ifelse(is.na(ppb_force$force5_any), ppb_force$force5_any == "zero", ppb_force$force5_any == "one")
+ppb_force$force5_any <- replace(ppb_force$force5_any, ppb_force$force5_any == FALSE, 1)
+ppb_force$force5_any <- ppb_force$force5_any %>% 
+  replace_na(0)
+
+ppb_force$force6_any <- ifelse(is.na(ppb_force$force6_any), ppb_force$force6_any == "zero", ppb_force$force6_any == "one")
+ppb_force$force6_any <- replace(ppb_force$force6_any, ppb_force$force6_any == FALSE, 1)
+ppb_force$force6_any <- ppb_force$force6_any %>% 
+  replace_na(0)
+
+ppb_force$force7_any <- ifelse(is.na(ppb_force$force7_any), ppb_force$force7_any == "zero", ppb_force$force7_any == "one")
+ppb_force$force7_any <- replace(ppb_force$force7_any, ppb_force$force7_any == FALSE, 1)
+ppb_force$force7_any <- ppb_force$force7_any %>% 
+  replace_na(0)
+
+ppb_force$force8_any <- ifelse(is.na(ppb_force$force8_any), ppb_force$force8_any == "zero", ppb_force$force8_any == "one")
+ppb_force$force8_any <- replace(ppb_force$force8_any, ppb_force$force8_any == FALSE, 1)
+ppb_force$force8_any <- ppb_force$force8_any %>% 
+  replace_na(0)
+```
+No error messages.  Let's make sure this worked:
+
+```{r}
+ppb_force %>%
+  group_by(force2_any, force3_any, force4_any, force5_any, force6_any, force7_any, force8_any) %>%
+  summarise(n())
+```
+Excellent.  
+
+Now let's create a var that adds up the number of force applications per officer-civilian interaction.  Should match the table above...
+
+```{r}
+ppb_force$force_officer_sum <- ppb_force$force1_any + ppb_force$force2_any  + ppb_force$force3_any  + ppb_force$force4_any  + ppb_force$force5_any  + ppb_force$force6_any  + ppb_force$force7_any  + ppb_force$force8_any
+
+ppb_force %>%
+   group_by(force_officer_sum) %>%
+   summarise(n())
+```
+That worked first time!  Maybe I'm actually learning how to do stuff in R!
+
+
+
+
+
+
+Now let's try to create a level of force index that can be applied to each moment/application of force, and then summed to yield a numerical measure of force burden per officer-civilian interaction.
+
+
+
+
+PPB official definition of force per Directive 1010.00:  "Force:  Physical coercion used to effect, influence or persuade an individual to comply with an officer, to include the intentional pointing of a firearm at an individual.  Control holds and handcuffing without resistance do not constitute force."  Force / coercion is implicit in any interaction with a police officer.  By the PPB definition, force seems to mean a physical action that carries a risk of injury.
+
+**QUESTION FOR PPB: ARE "INVOLVED MEMBERS" WHO DIRECTS ANOTHER OFFICER TO USE FORCE INCLUDED IN THE FORCE DATASET?  IS AN "INVOLVED MEMBER" WHO MERELY PROVIDES "IMMEDIATE COVER" (STANDS BY IN CASE ASSISTANCE NEEDED) INCLUDED IN THE DATASET?  IS EVERY OFFICER PRESENT INCLUDED IN THE DATASET?**
+
+//force y/n by sequence.  total force applications (sum of force y/n).  force level by sequence (need PPB definition/code).  Elim force against animals.  consider recoding forcelev to 0,1,2,3,4 in order of increasing severity.  PPB analysts must have done some of this in reverse to get the forcelev, or maybe that's on the form or in the secondary supervisors' form.  Ultimately, to summarize force by encounter, we need 0/1 variables for each kind of force for each temporal stage.  Or, at least force level for each temp stage.  
+
+**I think I should wait with this until I hear from PPB how force level is assigned, entered, and/or calculated.**  Some decision that depend on this are whether force level should be calculated via an algorithm during analysis or make permanent in a dataset.  Or does that distinction really matter in R?
+
+OK, looking back again at the ppb metadata for use of force dashboard, force level is "Level of supervisor review based on force type and event circumstances, as defined by Portland Police Bureau's (PPB) Directive 1010.00 regarding use of force."  
+
+PPB Directive 1010.00 can be found here: https://www.portlandoregon.gov/police/article/751998  
+
+(if more than one officer involved, one officer's temporal stage will not necessary match another's.  can we tell who was first?)
+
+**QUESTION FOR PPB: MAY I HAVE COPY OF THE SUPERVISOR'S FORM?  DO PPB ANALYSTS HAVE AN ALGORITHM TO CALCULATE FORCE LEVEL OR, IF NOT, HOW WAS FORCE LEVEL DETERMINED?  MAY I SEE THE ALGORITHM?**
+
+**QUESTION FOR PPB: DO WE KNOW IN THE DATA WHICH OFFICER WAS THE FIRST TO USE FORCE, IF MORE THAN ONE OFFICER USED FORCE?  DO WE KNOW HOW MANY OFFICERS WERE ON THE SCENE THAT DID *NOT* USE FORCE?  (I ASSUME THE ANSWERS ARE "NO".)**
+
+
+**"incid_day"            **
+
+
+```{r}
+ppb_force %>%
+  group_by(ppb_force$incid_day_raw) %>%
+  summarise(n())
+```
+Let's rename and make a permanent clear var:
+
+```{r}
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "FRI", "Friday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "MON", "Monday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "TUE", "Tuesday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "WED", "Wednesday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "THU", "Thursday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "SAT", "Saturday")
+ppb_force$incid_day_raw <- replace(ppb_force$incid_day_raw, ppb_force$incid_day_raw == "SUN", "Sunday")
+
+ppb_force$incid_day <- ppb_force$incid_day_raw
+
+ppb_force %>%
+  group_by(ppb_force$incid_day) %>%
+  summarise(n())
+
+
+```
+
+
+**"incid_disp"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_disp_raw) %>%
+  summarise(n())
+```
+Seems OK as is, although value = Victim is unclear, esp since much force is used on average on this category.  Next, convert to perm var:
+
+```{r}
+ppb_force$incid_disp <- ppb_force$incid_disp_raw
+```
+
+
+Let's see how disposition correlates with mental status:
+
+```{r}
+CrossTable(ppb_force$incid_disp_raw, ppb_force$civil_mental, chisq = TRUE, simulate.p.value = TRUE)
+```
+Release to medical is the disposition of by far the great proportion of "mental" cases.
+
+```{r}
+CrossTable(ppb_force$civil_mental, ppb_force$civil_transient, chisq = TRUE, simulate.p.value = TRUE)
+```
+Contrary to expectations, transience and mental crisis reports of officers are negatively associated.  Need to learn more about how officers fill in these data.  Perhaps they tend to group civilians into just one category: transients, mental, etoh, drug.  But I understood that transience was based on not having an address on the form, rather than an officer's judgement that a civilian was transient.
+
+**"incid_id"         **
+
+
+Randomly assigned incident number.  Numerical variable.  Just scanning the spreadsheet, I did not see a case in which 2 civilians shared the same incident number, so this looks like a true tag for "incidence," by my definition.  PPB should know for sure.
+
+I found no case with a missing incident number.
+
+*QUESTION FOR PPB: How exactly and when and by whom is this number assigned?*
+
+Create permanent variable:
+
+```{r}
+ppb_force$incid_id <- ppb_force$incid_id_raw
+```
+
+
+
+**"incid_month"       **
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_month_raw) %>%
+  summarise(n())
+```
+Looks like no variant spellings and no case with a missing value for Month.  I will make the permanent var directly form the raw:
+
+```{r}
+ppb_force$incid_month <- ppb_force$incid_month_raw
+```
+
+
+*Query: should we write code to deal with future possible misspellings or missing data, or code to flat it if it occurs?  This applies to all variables, not just incident month.*
+
+
+**"incid_sixhour"   **
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_sixhour_raw) %>%
+  summarise(n())
+```
+About 15% missing data here.  No way to impute.  Probably best to set the "-" to NA.
+```{r}
+ppb_force$incid_sixhour_raw <- replace(ppb_force$incid_sixhour_raw, ppb_force$incid_sixhour_raw == "-", NA)
+```
+
+```{r}
+ppb_force %>%
+  group_by(incid_sixhour_raw) %>%
+  summarise(n())
+```
+Success.  Now to apply to newvar:
+
+```{r}
+ppb_force$incid_sixhour <- ppb_force$incid_sixhour_raw
+```
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_sixhour) %>%
+  summarise(n())
+```
+OK.
+
+
+**"incid_year"      **
+
+
+```{r}
+ppb_force %>%
+  group_by(incid_year_raw) %>%
+  summarise(n())
+```
+
+Year looks in good shape as is.  I will create the newvar:
+
+```{r}
+ppb_force$incid_year <- ppb_force$incid_year_raw
+```
+
+
+
+**"officer_id"      **
+
+Numeric data.  Not the officer's real ID.  Officer IDs are associated with more than one incidents, some with a large number of incidents.  I found just one case with a missing officer ID number.  Might be a case with some dirty data--officer's tenure was entered as 118 years.  Well past retirement age!  This case was from Dec 2017.  Other data for that case seem OK.
+
+Create permanent var:
+
+```{r}
+ppb_force$officer_id <- ppb_force$officer_id_raw
+```
+
+
+**"officer_precinct"**
+
+
+```{r}
+ppb_force %>%
+  group_by(officer_precinct_raw) %>%
+  summarise(n())
+```
+52 cases with missing precinct data.  Leave these as NA and, in a supplemental variable create an expanded "other" category that matches how Rosenbaum and PPB report these data.
+
+```{r}
+ppb_force$officer_precinct <- ppb_force$officer_precinct_raw
+ppb_force$officer_precinct_collapsed <- ppb_force$officer_precinct
+```
+
+
+```{r}
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Other (please specify)", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Detectives", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "DVD", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Family Services", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "K9", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Strategic Services: CIU", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Specialty", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Training", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Transit (PPB Only)", "Transit")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Youth Services", "Other")
+
+ppb_force$officer_precinct_collapsed <- replace(ppb_force$officer_precinct_collapsed, ppb_force$officer_precinct_collapsed == "Personnel", "Other")
+```
+```{r}
+ppb_force %>%
+   group_by(officer_precinct_raw, officer_precinct_collapsed, officer_precinct) %>%
+   summarise(n())
+```
+Success!
+
+
+
+
+**"officer_tenure"    **
+```{r}
+#nextline sorts by tenure.  if want descending, type - before varname.  can list multiple sorting vars.
+ppb_force <- ppb_force[order (ppb_force$officer_tenure_raw),]
+
+#shows the last 200 rows
+tail(ppb_force$officer_tenure_raw, n = 200L)
+```
+Longest serving officer has 33 years in the Bureau.  4 NAs.  Three with tenure over 100 years, can't be correct.
+
+```{r}
+head(ppb_force$officer_tenure_raw, n = 200L)
+```
+
+
+
+95 cases with tenure approx = 0 (could be negatively or positively near zero).  2 cases with substantially negative numbers.  10 cases with a positive decimal extremely close to zero, far too small to equate to a month of tenure, or even a day.  Some officers were from the "training" precinct, maybe this explains some of the weird numbers.  Should probably wipe out the extreme values and set them to NA. 
+
+First, let's get the crazy numbers changed to NA.
+
+```{r}
+ppb_force$officer_tenure_raw <- replace(ppb_force$officer_tenure_raw, ppb_force$officer_tenure_raw <= -0.01, NA)
+ppb_force$officer_tenure_raw <- replace(ppb_force$officer_tenure_raw, ppb_force$officer_tenure_raw >= 40, NA)
+
+```
+Based on the inspection described below, I will make this no-outliers dataset the permanent (non-raw) *measured* tenure variable: 
+
+```{r}
+ppb_force$officer_tenure <- ppb_force$officer_tenure_raw
+```
+
+
+Now, let's see how training relates to years of tenure:
+
+```{r}
+test3 <- ppb_force %>% 
+  filter(!is.na(officer_tenure_raw)) %>% 
+  group_by(officer_precinct_raw) %>% 
+  summarise(
+    n                    = n(),
+    mean                 = mean(officer_tenure_raw),
+    `standard deviation` = sd(officer_tenure_raw),
+    min                  = min(officer_tenure_raw),
+    max                  = max(officer_tenure_raw)
+  ) %>% 
+  print()
+```
+There are zero-tenure values for precinct == training but also in the large geographic precincts.  Let's make a factor (categorical) var that includes possible floating-point negatives to see how many zeroes are in each precinct.
+To reduce clutter, I also will create a temporary collapsed2 precinct var that lets training appear as its own category:
+
+
+
+```{r}
+test4 <- ppb_force
+test4$officer_precinct_collapsed2 <- test4$officer_precinct
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Other (please specify)", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Detectives", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "DVD", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Family Services", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "K9", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Strategic Services: CIU", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Specialty", "Other")
+
+#test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, #test4$officer_precinct_collapsed2 == "Training", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Transit (PPB Only)", "Transit")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Youth Services", "Other")
+
+test4$officer_precinct_collapsed2 <- replace(test4$officer_precinct_collapsed2, test4$officer_precinct_collapsed2 == "Personnel", "Other")
+```
+
+```{r}
+breaks4 <- c(-0.05, 0, 0.05, 50)
+test4$officer_tenure_test4 <- cut(test4$officer_tenure_raw, breaks4, 
+  labels = c("-0.05-0", "0-0.05", "0.05+" ))
+
+```
+
+
+```{r}
+gmodels::CrossTable(test4$officer_precinct_collapsed2, test4$officer_tenure_test4)
+```
+OK.  Training has the highest *proportion* of near-zero negatives, but the large, geographic precincts higher counts.  
+Difficult to know what these near-zero values signify.  Ask PPB.  Looks like a problem with the method PPB uses to calculate tenure.  Options are to code them as exactly zero or change them to NA.  Given that the near-zeroes are very common in the Training "precinct," it seems that they might mean something real.  Therefore, I will leave them unmodified in the *officer_tenure* permanent variable and force them to ==0 in the factor variable that I create from the measured data.  
+
+*QUESTION FOR PPB:  WHAT EXPLAINS THESE NEAR-ZERO TENURE VALUES?*
+
+Are the zeroes associated with year, ie, is this possibly a coding error from the early days of report transcription?
+
+
+```{r}
+ppb_force_summary <- ppb_force %>% 
+  filter(!is.na(officer_tenure_raw)) %>% 
+  group_by(incid_year) %>% 
+  summarise(
+    n                    = n(),
+    mean                 = mean(officer_tenure_raw),
+    `standard deviation` = sd(officer_tenure_raw),
+    min                  = min(officer_tenure_raw),
+    max                  = max(officer_tenure_raw)
+  ) %>% 
+  print()
+```
+
+Just using mean tenure, tenure is decreasing with year.  Let's create a factor variable to group tenure into groups.  After some fiddling to get groups of approximately equal size:
+
+```{r}
+breaks <- c(-0.01, 2, 5, 10, 15, 20, 50)
+ppb_force$officer_tenure_f <- cut(ppb_force$officer_tenure_raw, breaks, 
+  labels = c(
+        "[0-2]", "(2-5]", "(5-10]", "(10-15]", "(15-20]", 
+       "(20+"))
+ppb_force %>%
+  group_by(officer_tenure_f) %>%
+  summarise(n())
+```
+
+Now, is tenure, esp. tenure below 5 yrs, correlated with year?
+
+```{r}
+gmodels::CrossTable(ppb_force$incid_year, ppb_force$officer_tenure_f)
+```
+There does seem to be a non-linear correlation with Year. Short-tenure offices were involved in a higher percentage of forceful interactions starting in 2018, peaking in 2019, and receding to 2018 levels in 2021.  This does not seem like a result of data entry abnormalities but rather some real process.
+
+*QUESTION FOR PPB: WHAT EXPLAINS YOUNGER OFFICERS BECOMING MORE INVOLVED IN FORCEFUL INCIDENTS AFTER 2017?*
+
+
+**"recordcount_1"      **  undone
+
+According to PPB Metadata description, Record Count is 'The number of times a record (or FDCR) has been submitted. In the overwhelming majority of cases there is only a single record submitted, however if an officer uses more instances of force than can be tracked on a single FDCR (up to 8) a second will be submitted under the same Record ID. The 'Record Count' will display how many duplicate instances there are for an officer in an single event. For example, if an officer uses force on the same subject in the same instance 9 or more times, there will be a Record Count of "2".
+
+```{r}
+ppb_force %>%
+  group_by(recordcount_1_raw) %>%
+  summarise(n())
+```
+Evidently, there was one encounter in which more than 8 uses of force occurred, and 1 encounter during which one office used force more than 72 times.  This last observation seems unlikely.  
+
+Let's take a look at the observation where reccount1 = 10:
+
+```{r}
+data_test <- ppb_force[ppb_force$recordcount_1_raw == 10, ]
+data_test
+```
+
+Well, this observation shows both resistance and force through 8 repetitions for a white male with a knife and an officer with 10 years in the force from the training "precinct."  The force is repetitively "Less Lethal".  Let's check whether there are many rows for this particular civilian:
+
+```{r}
+remove(data_test)
+data_test <- ppb_force[ppb_force$civil_id_raw == 357350, ]
+data_test
+```
+There are 10 rows for the same civilian involving 9 different officers and a lot of tear gas.  One officer submitted 2 reports, so the record count for one of that officer's reports should be 2, but instead the second record count is 10.  Data input error, wrong definition of number of records.  This should be changed to 2:
+
+```{r}
+ppb_force$recordcount_1_raw  <- replace (ppb_force$recordcount_1_raw, ppb_force$recordcount_1_raw == 10, 2)
+
+ppb_force$recordcount_1 <- ppb_force$recordcount_1_raw
+
+ppb_force %>%
+  group_by(ppb_force$recordcount1__raw, ppb_force$recordcount_1) %>%
+  summarise(n())
+```
+
+
+So, as of end of 2021, there are currently 2 interactions in the dataset that have 2 records.  The perfect solution is to create additional force variables beyond *force8,* i.e., *force9* ... *force16*, and import the second observation into the first observation.  For now, I will forgo this work because to do it properly so all future occasions of multiple reports are solved will require more programming skill than I presently possess, and my time would be better spent starting analyses.  *Note that the count variable will have to be reprogrammed after additional force/n vars are created (undone).*
+
+
+*civil_instance*
+
+*civil_instance_raw* is sometimes missing:
+
+
+
+```{r}
+remove(data_temp2)
+data_temp2 <- ppb_force[order(ppb_force$civil_instance_raw), na.last = TRUE]
+
+tail(data_temp2, n = 20)
+```
+There ARE 7 records with missing values for *civil_instance_raw*.  All 7 are from 2017, the first data collection period, when data collection and transcription problems are more frequent. All 7 lack *civil_age* and *civil_id*.  But the rest of the data are intact.  I would leave as is.  If necessary, could assign id numbers to these cases later.
+
+
+
+
+**"recordcount_2"     **
+
+
+```{r}
+ppb_force %>%
+  group_by(recordcount_2_raw) %>%
+  summarise(n())
+```
+*recordcount1* and *recordcount_2* have exactly the same counts.  No clear what the difference is between the two vars.  I will change the value of 10 to be 2, as I did for *recordcount_1_raw* and create the permanent variable:
+
+```{r}
+ppb_force$recordcount_2_raw  <- replace (ppb_force$recordcount_2_raw, ppb_force$recordcount_2_raw == 10, 2)
+
+ppb_force$recordcount_2 <- ppb_force$recordcount_2_raw
+
+ppb_force %>%
+  group_by(recordcount_2_raw, recordcount_2) %>%
+  summarise(n())
+```
+
+
+
+**RESISTANCE VARIABLES**
+
+Here are some definitions from the PPB Metadata webpage: 
+
+No weapon (unarmed):	Subject was unarmed during force event
+
+Firearm:	Subject was armed with a firearm during the force event
+
+Firearm - Replica: 	Subject was armed with a replica firearm during the force event
+
+Firearm - Implied:	Subject implied being armed with a firearm during the force event
+
+Knife / Edged Weapon / Stabbing Instrument:	Subject was armed with a knife, edged weapon or stabbing instrument during the force event
+
+Blunt Object:	Subject was armed with a blunt object during the force event
+
+Needle / Spit / Bodily Fluids:	Subject was armed with and/or used a needle, spit or other bodily fluids as a weapon during the force event
+
+Weapon Present or reported but not used or threatened use:	A weapon was present or reported to be present during the force event, but the subject did not utilize or threaten officers with mentioned reported weapon
+
+Other Weapon:	Subject was armed with another type of weapon not already listed during the force event 
+
+
+
+*resist1* through *resist8* record the kinds of forceful or passive resistance used by one civilian, ordered according to the temporal sequence in which they occurred or continued.  Presumably, civilian resistance persists or evolves over time in response to officers' use of force, although hypothetically a civilian's threats also could escalate while an officer maintained passive.  The variables *resist2* thru *resist8* could logically be blank if resistance or officer-force did not continue or evolve.
+
+*QUESTION FOR PPB:  Could PPB analysts please elaborate on how resistance is defined and recorded?*
+
+```{r}
+ppb_force %>%
+  group_by(resist1_raw) %>%
+  summarise(n())
+```
+There appear to be 6 possible answers, plus NA.  Let's see if there is any correlation between the ambiguous answers and year of data collection:
+
+```{r}
+ppb_force %>%
+  group_by(resist1_raw, incid_year) %>%
+  summarise(n())
+```
+
+No obvious large problems.  "Unclear" appears only in 2017, "NA" appears in subsequent years.  There are 6 cases with missing data (coded "NA"), 8 cases coded "Null," and 2 cases coded as "unclear."  Does "Null" mean no resistance, or no data?  For now, because there are also categories for passive resistance, unclear, and NA, **I will assume that Null means no resistance and will retain the value.  I Will sweep "Unclear" into NA.**
+
+*QUESTION FOR PPB: Why no instances of deadly resistance in the dataset after 2018?*
+
+```{r}
+ppb_force$resist1_raw <- replace(ppb_force$resist1_raw, ppb_force$resist1_raw == "Unclear", NA)
+
+ppb_force$resist1_raw <- replace(ppb_force$resist1_raw, ppb_force$resist1_raw == "Null", "None")
+```
+```{r}
+ppb_force %>%
+  group_by(resist1_raw) %>%
+  summarise(n())
+```
+Now create the permanent variable:
+
+```{r}
+ppb_force$resist1 <- ppb_force$resist1_raw
+ppb_force %>%
+  group_by(resist1) %>%
+  summarise(n())
+
+```
+Confirmed.  I will do the same to the other 7 *resist* variables:
+
+**"resist2"          **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist2_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist2_raw <- replace(ppb_force$resist2_raw, ppb_force$resist2_raw == "Unclear", NA)
+
+ppb_force$resist2_raw <- replace(ppb_force$resist2_raw, ppb_force$resist2_raw == "Null", "None")
+
+ppb_force$resist2 <- ppb_force$resist2_raw
+
+ppb_force %>%
+  group_by(resist2) %>%
+  summarise(n())
+
+```
+
+
+**"resist3"           **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist3_raw) %>%
+  summarise(n())
+```
+```{r}
+ppb_force$resist3_raw <- replace(ppb_force$resist3_raw, ppb_force$resist3_raw == "Unclear", NA)
+
+ppb_force$resist3_raw <- replace(ppb_force$resist3_raw, ppb_force$resist3_raw == "Null", "None")
+
+ppb_force$resist3 <- ppb_force$resist3_raw
+
+ppb_force %>%
+  group_by(resist3) %>%
+  summarise(n())
+
+```
+
+
+**"resist4"         **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist4_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist4_raw <- replace(ppb_force$resist4_raw, ppb_force$resist4_raw == "Unclear", NA)
+
+ppb_force$resist4_raw <- replace(ppb_force$resist4_raw, ppb_force$resist4_raw == "Null", "None")
+
+ppb_force$resist4 <- ppb_force$resist4_raw
+
+ppb_force %>%
+  group_by(resist4) %>%
+  summarise(n())
+
+```
+
+
+**"resist5"         **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist5_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist5_raw <- replace(ppb_force$resist5_raw, ppb_force$resist5_raw == "Unclear", NA)
+
+ppb_force$resist5_raw <- replace(ppb_force$resist5_raw, ppb_force$resist5_raw == "Null", "None")
+
+ppb_force$resist5 <- ppb_force$resist5_raw
+
+ppb_force %>%
+  group_by(resist5) %>%
+  summarise(n())
+
+```
+
+
+**"resist6"        **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist6_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist6_raw <- replace(ppb_force$resist6_raw, ppb_force$resist6_raw == "Unclear", NA)
+
+ppb_force$resist6_raw <- replace(ppb_force$resist6_raw, ppb_force$resist6_raw == "Null", "None")
+
+ppb_force$resist6 <- ppb_force$resist6_raw
+
+ppb_force %>%
+  group_by(resist6) %>%
+  summarise(n())
+
+```
+
+
+**"resist7"         **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist7_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist7_raw <- replace(ppb_force$resist7_raw, ppb_force$resist7_raw == "Unclear", NA)
+
+ppb_force$resist7_raw <- replace(ppb_force$resist7_raw, ppb_force$resist7_raw == "Null", "None")
+
+ppb_force$resist7 <- ppb_force$resist7_raw
+
+ppb_force %>%
+  group_by(resist7) %>%
+  summarise(n())
+
+```
+
+
+**"resist8"           **
+
+
+```{r}
+ppb_force %>%
+  group_by(resist8_raw) %>%
+  summarise(n())
+```
+
+```{r}
+ppb_force$resist8_raw <- replace(ppb_force$resist8_raw, ppb_force$resist8_raw == "Unclear", NA)
+
+ppb_force$resist8_raw <- replace(ppb_force$resist8_raw, ppb_force$resist8_raw == "Null", "None")
+
+ppb_force$resist8 <- ppb_force$resist8_raw
+
+ppb_force %>%
+  group_by(resist8) %>%
+  summarise(n())
+
+```
+**THREAT VARIABLES**
+
+Threat variables record various kind of aggressive behaviors, passive resistance, and weapons used, brandished, or possessed by civilians.  NA in the raw data really means zero, no such threat observed or expected.  After changing NA to 0 in each variable, I will create a count variable to tally up the number of aggressive threats brandished by civilians, to get a sense of whether only the most serious threat is recorded or whether more than one threat is commonly reported.
+
+
+**"threat_biohaz"    **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_biohaz_raw) %>%
+  summarise(n())
+```
+
+
+
+```{r}
+ppb_force$threat_biohaz_raw <- ifelse(is.na(ppb_force$threat_biohaz_raw), ppb_force$threat_biohaz_raw == 0, ppb_force$threat_biohaz_raw == 1)
+
+ppb_force$threat_biohaz_raw <- replace(ppb_force$threat_biohaz_raw, ppb_force$threat_biohaz_raw == FALSE, 1)
+
+ppb_force$threat_biohaz_raw <- ppb_force$threat_biohaz_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_biohaz_raw) %>%
+  summarise(n())
+```
+That worked.  Now create permanent var:
+
+```{r}
+ppb_force$threat_biohaz <- as.numeric(ppb_force$threat_biohaz_raw)
+```
+
+**"threat_blunt"     **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_blunt_raw) %>%
+  summarise(n())
+```
+
+
+
+```{r}
+ppb_force$threat_blunt_raw <- ifelse(is.na(ppb_force$threat_blunt_raw), ppb_force$threat_blunt_raw == 0, ppb_force$threat_blunt_raw == 1)
+
+ppb_force$threat_blunt_raw <- replace(ppb_force$threat_blunt_raw, ppb_force$threat_blunt_raw == FALSE, 1)
+
+ppb_force$threat_blunt_raw <- ppb_force$threat_blunt_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_blunt_raw) %>%
+  summarise(n())
+```
+That worked.  Now create permanent var:
+
+```{r}
+ppb_force$threat_blunt <- as.numeric(ppb_force$threat_blunt_raw)
+```
+
+**"threat_gun"      **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_raw) %>%
+  summarise(n())
+```
+
+
+
+
+```{r}
+ppb_force$threat_gun_raw <- ifelse(is.na(ppb_force$threat_gun_raw), ppb_force$threat_gun_raw == 0, ppb_force$threat_gun_raw == 1)
+
+ppb_force$threat_gun_raw <- replace(ppb_force$threat_gun_raw, ppb_force$threat_gun_raw == FALSE, 1)
+
+ppb_force$threat_gun_raw <- ppb_force$threat_gun_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_raw) %>%
+  summarise(n())
+```
+That worked.  Now create permanent var:
+
+```{r}
+ppb_force$threat_gun <- as.numeric(ppb_force$threat_gun_raw)
+```
+
+**"threat_gun_implied"**
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_implied_raw) %>%
+  summarise(n())
+```
+
+
+
+
+```{r}
+
+ppb_force$threat_gun_implied_raw <- ifelse(is.na(ppb_force$threat_gun_implied_raw), ppb_force$threat_gun_implied_raw == 0, ppb_force$threat_gun_implied_raw == 1)
+
+ppb_force$threat_gun_implied_raw <- replace(ppb_force$threat_gun_implied_raw, ppb_force$threat_gun_implied_raw == FALSE, 1)
+
+ppb_force$threat_gun_implied_raw <- ppb_force$threat_gun_implied_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_implied_raw) %>%
+  summarise(n())
+```
+That worked.  
+
+
+Now create permanent var:
+
+```{r}
+ppb_force$threat_gun_implied <- as.numeric(ppb_force$threat_gun_implied_raw)
+```
+
+**"threat_gun_replica"**
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_replica_raw) %>%
+  summarise(n())
+```
+
+
+```{r}
+ppb_force$threat_gun_replica_raw <- ifelse(is.na(ppb_force$threat_gun_replica_raw), ppb_force$threat_gun_replica_raw == 0, ppb_force$threat_gun_replica_raw == 1)
+
+ppb_force$threat_gun_replica_raw <- replace(ppb_force$threat_gun_replica_raw, ppb_force$threat_gun_replica_raw == FALSE, 1)
+
+ppb_force$threat_gun_replica_raw <- ppb_force$threat_gun_replica_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_gun_replica_raw) %>%
+  summarise(n())
+```
+That worked.  Now create permanent var:
+
+```{r}
+ppb_force$threat_gun_replica <- as.numeric(ppb_force$threat_gun_replica_raw)
+```
+
+
+**"threat_knife"      **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_knife_raw) %>%
+  summarise(n())
+```
+*NOTE: CONSIDER RENAMING THIS VARIABLE TO "threat_edge_raw" to provide a more inclusive description?*
+```{r}
+
+#The commented code below is a cruder way to get a 0/1 result.
+#ppb_force$threat_knife_raw <- ifelse(is.na(ppb_force$threat_knife_raw), ppb_force$threat_knife_raw == 0, ppb_force$threat_knife_raw == 1)
+
+#ppb_force$threat_knife_raw <- replace(ppb_force$threat_knife_raw, ppb_force$threat_knife_raw == FALSE, 1)
+
+#ppb_force$threat_knife_raw <- ppb_force$threat_knife_raw %>% 
+#  replace_na(0)
+
+
+ppb_force$threat_knife_raw <- replace(ppb_force$threat_knife_raw, ppb_force$threat_knife_raw == "Knife / Edged Weapon / Stabbing Instrument", 1)
+
+ppb_force$threat_knife_raw <- ppb_force$threat_knife_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_knife_raw) %>%
+  summarise(n())
+```
+That worked.  Now create permanent var:
+
+```{r}
+ppb_force$threat_knife <- as.numeric(ppb_force$threat_knife_raw)
+```
+
+
+**"threat_other"      **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_other_raw) %>%
+  summarise(n())
+```
+This looks like a free text transcription.  Would have to be collapse-coded by hand every time new data added to the dataset.  But there are some important categories in here, like reach for officer's gun, vehicle, and biting, could search on that string, it is by far the largest category...
+
+For now, however, let's just convert all strings to 1, and all NA to 0.
+
+```{r}
+
+ppb_force$threat_other_raw <- ifelse(is.na(ppb_force$threat_other_raw), ppb_force$threat_other_raw == "zero", ppb_force$threat_other_raw == "one")
+
+ppb_force$threat_other_raw <- replace(ppb_force$threat_other_raw, ppb_force$threat_other_raw == FALSE, 1)
+
+ppb_force$threat_other_raw <- ppb_force$threat_other_raw %>% 
+  replace_na(0)
+```
+```{r}
+ppb_force %>%
+  group_by(threat_other_raw) %>%
+  summarise(n())
+```
+
+Now create permanent newvar:
+
+```{r}
+ppb_force$threat_other <- as.numeric(ppb_force$threat_other_raw)
+
+ppb_force %>%
+  group_by(threat_other, threat_other_raw) %>%
+  summarise(n())
+
+```
+
+
+
+**"threat_unused_weapon"    **
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_unused_weapon_raw) %>%
+  summarise(n())
+```
+Looks like the varname, passive, could be confusing.  This is really civilians who were armed but did not use their weapons.  It is a large category.  Will change to "threat_unused_weapon".  
+
+Change to a 1/0 var:
+
+```{r}
+ppb_force$threat_unused_weapon_raw <- replace(ppb_force$threat_unused_weapon_raw, ppb_force$threat_unused_weapon_raw == "Weapon Present or reported but not used or threatened use", 1)
+
+ppb_force$threat_unused_weapon_raw <- ppb_force$threat_unused_weapon_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_unused_weapon_raw) %>%
+  summarise(n())
+```
+That worked!  Let's convert to a permanent var:
+
+```{r}
+ppb_force$threat_unused_weapon <- as.numeric(ppb_force$threat_unused_weapon_raw)
+
+ppb_force %>%
+  group_by(threat_unused_weapon, threat_unused_weapon_raw) %>%
+  summarise(n())
+```
+
+
+
+**"threat_unarmed"**
+
+
+```{r}
+ppb_force %>%
+  group_by(threat_unarmed_raw) %>%
+  summarise(n())
+```
+Needs conversion to 0/1 var.
+
+```{r}
+ppb_force$threat_unarmed_raw <- replace(ppb_force$threat_unarmed_raw, ppb_force$threat_unarmed_raw == "No weapon (unarmed)", 1)
+
+ppb_force$threat_unarmed_raw <- ppb_force$threat_unarmed_raw %>% 
+  replace_na(0)
+```
+
+```{r}
+ppb_force %>%
+  group_by(threat_unarmed_raw) %>%
+  summarise(n())
+```
+Success!  Let's create a permanent var based on this transformation:
+
+```{r}
+ppb_force$threat_unarmed <- as.numeric(ppb_force$threat_unarmed_raw)
+
+ppb_force %>%
+  group_by(threat_unarmed, threat_unarmed_raw) %>%
+  summarise(n())
+```
+ 
+
+*threat_sum*
+
+Now let's create a variable that sums the number of threats per officer-civilian interaction, limited to dangerous threats, i.e., omitting unarmed, and weapons possessed but unused.  
+
+```{r}
+
+ppb_force$threat_sum <- as.numeric(ppb_force$threat_biohaz) + as.numeric(ppb_force$threat_blunt) + as.numeric(ppb_force$threat_gun) + as.numeric(ppb_force$threat_gun_implied) + as.numeric(ppb_force$threat_gun_replica) + as.numeric(ppb_force$threat_gun_implied) + as.numeric(ppb_force$threat_knife) + as.numeric(ppb_force$threat_other) 
+
+ppb_force %>%
+   group_by(force_officer_sum) %>%
+   summarise(n())
+```
+
+Clearly, all or most threats are reported, not just the most dangerous.  (Unclear why R thinks some of these threat variables are non-numeric but adding the as.numeric() argument makes the above code work.  I will go back above and create all the permanent threat variables as.numermic.)
+
+**CREATE PERMANENT CLEAN PPB_FORCE DATASET**
+
+Note:  I will not save ppb_force dataset back to csv after all these changes, but will create a new csv dataset that will contain all the permanent vars, after discarding the _raw vars. That will preserve the raw dataset (as long as the ppb_force data is not permanently saved in this script by mistake.)  
+
+*This script can then be applied to updated versions of the use-of-force dataset.  Note that the whole script should be run and all the output checked visually to make sure that no changes to the structure or coding of the raw dataset need to be accounted for.* 
+
+Some of the raw variables still need to be converted to permanent versions.  I will do that here:
+
+
+Let's list all the variables in ppb_force to make sure all raw vars have been cleaned and wrangled to vars without the _raw suffix.
+
+```{r}
+ls(ppb_force)
+```
+
+**NOw DROP THE RAW VARIABLES AND CREATE NEW CLEAN PPB USE OF FORCE DATASET, with vars grouped by type**
+
+```{r}
+ppbforce_clean_q321 = ppb_force[,!grepl("_raw$", names(ppb_force))]
+
+ppbforce_clean_q321 = select(ppbforce_clean_q321, starts_with("call"), starts_with("civil"),starts_with("force"),starts_with("incid"),starts_with("officer"),starts_with("resist"), starts_with("threat"),starts_with("record"))
+
+ls(ppbforce_clean_q321)
+```
+Success.  _raw variables removed, permanent variables retained.
+
+```{r}
+head(ppbforce_clean_q321, L=5)
+```
+The reordering worked.  (Primarily alphabetical by prefix.)
+
+**NOW, PERMANENTLY SAVE *ppbforce_clean_q321* AND REMOVE THE WORKING DATASET,  *ppb_force* **
+
+```{r}
+remove(ppb_force)
+
+save(ppbforce_clean_q321, file = "ppbforce_clean_q321.RData")
+
+write.csv(ppbforce_clean_q321, file = "ppbforce_clean_q321.csv")
+```
+
+
+
+
+**NOTES**
+
+When you save this or any RMarkdown notebook, an HTML file containing the code and output will be saved alongside it. (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview renders an HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+

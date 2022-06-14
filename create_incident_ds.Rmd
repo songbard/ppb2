@@ -1,0 +1,2964 @@
+<<<<<<< HEAD
+---
+title: "Creating a Civilian-Level (Incident-Level) PPB Use of Force Dataset"
+author: "Jonathan Brown with help from Ray Brunner"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+IMPORTANT: SEARCH ON THE STRING, dofirst, TO IDENTIFY PLACES WHERE YOU MUST CHANGE THE SCRIPT IF YOU ARE PROCESSING A NEW QUARTERLY UPDATE OF THE CLEANED SINGLE-OFFICER-REPORT-LEVEL PPB FORCE DATASET.
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+library(ggplot2)
+
+```
+
+**MOTIVATION**
+
+The publicly available Portland Police Bureau Use of Force dataset is organized at the use of force report (FDCR) level.  That is, each row of the dataset describes one officer's report on one interaction with one civilian at one time and place.  
+
+However, many use-of-force incidents involve more than one officer interacting with a civilian.  A more realistic description of use of force would combine the actions of all involved officers.  This would provide a description of use of force from the civilian's perspective. It also would describe what an outside observer would see, and it provides an accounting of overall police bureau behavior.  The R code described and executed within this notebook does this.
+
+
+**OVERVIEW OF METHOD**
+
+The 3-step programming strategy to do this was suggested by Ray Brunner.  The program below is an evolution of her idea.
+
+Step 1.  The first step is to create a starter dataset at the incident-level.  I use the *distinct()* function in R to select a dataset that retains only one row of data for each multi-officer incident with one civilian.  The variables selected into this dataset, called *incident_unique*, are ones that should have been reported identically by each officer, namely, variables describing the civilian, the time and day of the event, the origin and type of call that caused officers to confront the civilian, and the result of the incident, such as arrest, hospitalization, and release.  
+
+Variables that describe just one officer, or just one officer's interaction with the civilian, are left out of the starter dataset because these must be summed up across officers, or combined in other ways to create an overall description of the use-of-force incident.
+
+Step 2.  Meanwhile, among the variables not moved into *incident_unique*, I create additional variables that I can, in Step 3, combine from individual officers' reports to create summaries of events during multi-officer incidents.  Examples of the many such composite variables include the number of officers involved in an incident and the total number each kind of forceful action taken by all those officers combined.  
+
+Step 3.  In the third and final step, I use the R *inner_join()* and *group_by* functions to summarize data within each *incid_id* while appending the result to the *incident_unique* dataset.  This yields a single dataset, with one row of data per *incid_id*, that includes and summarizes all available data for each incident.
+
+The input dataset is *ppbforce_clean_q321.csv* or its successor, that is, the cleaned and improved officer-report_level dataset previously created by the *ppb_force_notebook_3_initial_wrangling.Rmd* script.  As PPB releases extended and updated use-of-force datasets each quarter, the R script contained in this document can be reused without modification.  Immediately below is the code that reads in *ppbforce_clean_q321.csv* or its successor, and creates a generically named dataset for further manipulation.  (The generic dataset is converted back to a date-of-download-specific incident-level dataset at the end of this script.)  *dofirst*
+
+
+```{r}
+ppbforce_clean <- read_csv("ppbforce_clean_q321.csv")
+ppbforce_clean %>%
+  summarise(n())
+```
+
+
+A note on terminology used within this project:  To reduce confusion, and hopefully not to increase it(!), one application of force on one civilian by one officer is termed an INTERACTION or an INFLICTION.  The sum of all interactions by one officer on one civilian is called an ENCOUNTER.  The combination of all encounters by multiple officers on one civilian is called an INCIDENT.
+
+
+**I. CREATE STARTER incident-LEVEL DATASET**
+
+**I.A.  Variables to Include As-Is in the Starter Dataset**
+
+*I.A.1.  Stable Variables.*  In principle, true incident-level descriptors should take the same values in all officers' descriptions of an incident.  However, different officers might perceive, observe, or enter different data, and analysts can make mistakes in data entry.  Where conflicts appear among officer-reports, it cannot be known, from the data themselves, which officer's entry is correct.  Therefore, we must pick one value as best we can and accept that a summary, incident-level dataset will perpetuate some of errors in the source data.  
+
+Here is a list of the variables that should be identical in all officers' reports of the same incident.  
+
+          
+"civil_age"                  
+"civil_age_f"                    
+"civil_id"                   
+"civil_instance"            
+"civil_sex"                 
+"incid_day"                  
+"incid_disp"                          
+"incid_force_lev"            
+"incid_id"                   
+"incid_month"               
+"incid_sixhour"              
+"incid_year"                 
+"recordcount_1"             
+"recordcount_2"    
+
+(Incident force level (maximum level of force used, *incid_force_level*) is uncertain of origin but I believe it is assigned at the incident-level when supervising officers review and approve individual officer's encounter-reports.  In any event, for data analysis purposes, I develop below an substitute force-level classification algorithm, based solely on data internal to the officer-reports.  Therefore, any problems and ambiguities with *incid_force_lev* can be ignored.)
+
+
+*I.A.2  Call Variables.*  Conceivably, different officers could have arrived on the scene in response to different 911 calls or police dispatch orders.  Or, an officer might face a difficult situation and request backup.  We could leave the *call_* vars in the original dataset and calculate new variables that indicate whether multiple calls occurred during the incident, and what these calls were.  This would be a complex endeavor that would not yield variables that I anticipate using.  Therefore, I have elected to treat the following Call Variables as incident-level descriptors that can be obtained from any officer's report.  (When selecting the particular officer whose data I will use, I will sort the data so that the officer with the most inflictions of force is selected.)
+
+"call_detail"        
+"call_group"                
+"call_source"     
+
+
+**I.B.  Incident-Level Variables to EXCLUDE from the Starter Dataset**
+
+
+*I.B.1.  Transience / Houselessness.*  Transience (*civil_transient*) is determined in PPB data by not having an address for the civilian recorded in an officer's report.  Non-reporting can arise because a civilian lack housing OR because the civilian does not provide an address or the officer does not collect it.  Conceivably, one reporting officer might get an address and the others, not.  About half of all officers' reports lack an address; surely, many of most of these civilians are not living on the street.  Let's therefore leave *civil_transient* out of the starter dataset and instead create (in Step 2) a composite variable that indicates housing if ANY officer's report says *civil_transient* = 0, i.e., provides an address.
+
+
+**I.B.2. Important Subject Attributes.**  The following vars are about inherent civilian characteristics that are either impossible to observe with precision (mental status, etoh intoxication, impairment caused by other drugs); or are inherently vague/subjective in themselves (race--esp as defined by PPB).  Values for these vars "should" be identical but they are based on officer perceptions and officer perceptions may legitimately differ.
+
+"civil_drug"              
+"civil_etoh"               
+"civil_mental"            
+"civil_race"        
+
+Because we have a particular interest in understanding interactions between mental status and use of force, selecting reports from officers who perceived a mental crisis seems important.  Because mental crisis is "under-diagnosed" in these data, I instead propose to assign a value of *civil_mental* = 1 to every use of force incident in which *at least one* officer perceived a state of mental crisis.  To do this, I will keep "civil_mental" out of the starter incident-level dataset and instead create an *incid_mental" variable per the previous sentence.
+
+In the same spirit, I will do the same with drug, etoh, and race.  In the case of race, I will create several composite vars to allow an analyst to give different "races" primacy:  black, Hispanic, white, Asian, if ANY officer reported these as a civilian's race.  
+
+
+**I.B.1.  Create New Variables to Allow Summation of Data across Officers within incidents**
+
+
+
+For starters, let's look at the *force2* and *force2* variables.  Important to look also at *force2* because it will have zero or NA values:
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1)  %>%
+  summarize(n())
+```
+```{r}
+ppbforce_clean %>%
+  group_by(force2)  %>%
+  summarize(n())
+
+```
+We see 22 possible categories of force.  We also see that when no force was reported after the initial force, *force1*, a value = NA is returned.  
+
+
+**I.B.1.a.  Create Simplified Categorization of Force**
+
+The following summary describes how I collapsed kinds of force into fewer categories, and also sorted them by level of force.  A new level of force categorization number is appended to each category of force, based on the assignments used by Rosenbaum and Associates in their Q2 2018 compliance report. (See below for more detail.)  To avoid confusion (hopefully), less injurious force is given a suffix = 1, corresponding to PPB force level IV.  More injurious force is given a suffix = 2, corresponding to PPB force levels III and II, and to Rosenbaum's composite category, III + II.  Commonly used terms are substituted for police jargon with the understanding that, for example, more brands of "conducting electrical wires (CEWs)" might be used than just the Taser brand that most people think of (*taser2*), and that more kinds of aerosols than tear gas are included in the *teargas2* category.  Firearm discharge against aggressive animals is put in *other2*.  Mercy killing of animals in distress is shifted to *NA*, because this is not relevant to analysis of force against humans.  Various small categories at my level 2 are combined in *other2*.  
+
+Note that *pointgun* is considered by PPB and/or Rosenbaum (see below) to be a level 1 (lowest level) use of force.  Presumably this is because a gun was not discharged so no physical injury occurred as a result of the action.  However, pointing a firearm carries an explicit threat of immediate death and, from the standpoint of someone in mental crisis, or anyone for that matter, having a gun pointed at them would be quite disturbing and might lead to irrational actions that would trigger additional police violence. Plus, I imagine that a lot of shouting by officers and signs of fear and arousal on the officer(s) part add to the level or sense of threat. Therefore, I am going to make *pointgun* a level 2 use of force in my new *force_small_f* setup.
+
+The "level" of force is not just a matter of the physical harm that immediately results.  Threat is also a component, as is the knock-on effect of high-threat actions by police.  Of course, the early use of high-threat force can also, arguably, reduce future violence by both civilians and police.  I wonder whether early high-threat force might be effective on rational, economically motivated criminals but counter-productive on civilians whose thinking is deranged by mental illness and/or psychoactive substances.  Given that roughly half of all use-of-force incidents involve the latter population, this is an important question.
+
+Note that the PPB use-of-force data detail both the THREATS, perceived and real, posed by civilians, and the acts of RESISTANCE that civilians made.  However, for officers, PPB data only show the policing equivalent of RESISTANCE.  There is no assessment of the threat implied or posed by officers which, as with the threats posed by civilians to officers, could be perceived or real.  Certainly, the appearance on the scene of any well-armed, sworn officer implies a continuum of threat ranging from official observation through social humiliation, ostracism, job-loss, constraint, imprisonment, pain, injury, disablement, and death. From a substance-addicted, house-less person's perspective, humiliation, ostracism, and job-loss are present realities so cannot be threats, and imprisonment might be desirable because it provides food, warmth, and--at present in Oregon--the only realistic path to residential mental health and addiction-counseling services.  Whether they act on it or not, officers probably feel less constrained by the potential adverse consequences of using force on houseless, mentally ill, or addicted persons.
+
+Here is my simplified re-categorization of uses-of-force, together with the number of occurrences between 2018 and 2021 of each of PPB/Rosenbaum's categories:
+
+Aerosol rest.	84			              teargas2
+Baton - pry	1			                  takedown1
+Baton - strike	2		               	strikekick2
+Box-in VIS	380			                vehic1
+CEW	184			                        taser2
+CHWI	7			                        lethal2
+Control Against Resistance	2654		grab1
+FD - animal agg.	2			            lethal2
+FD - animal suf.	18			          NA
+Hobble	33	                        cuffresist1
+Impact Muni	3			                  other2
+K9	71			                        dogbite2
+Less Lethal	89			                lethal2
+PFA	615			                        pointgun2        Rosenbaum ranked PFA = IV
+PIT - VIS	74			                  vehic2
+Ram - VIS	4			                    vehic2               
+Resisted HC	2030			              cuffresist1
+Strikes/kicks	58			              strikekick2
+Takedown	151			                  takedown2        Rosenbaum ranked II-III = my cat 2
+Takedown (II and III)	544	          takedown2        PPB graded II-III = my cat 2
+Takedown (IV)	250			              takedown1        PPB graded IV = my cat 1
+NA	1	                              NA
+
+
+
+```{r}
+#create new force1 variable to hold collapsed categories of force
+ppbforce_clean$force1_small_f <- (ppbforce_clean$force1)
+
+#ppbforce_clean %>%
+#  group_by(force1, force1_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "CEW", "taser2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force1, force1_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1_small_f) %>%
+  summarise(n())
+```
+The new collapsing of categories gets the original 22 down to 12, plus a small NA category, and incorporates level of force into the strings.  Now, this must be repeated for each of the force sequence variables, *force2* thru *force8*.
+
+
+Before collapsing the other force variables, here is more information about force categorization from Rosenbaum when they were wrestling with this in 2018: From: ASSESSMENT REPORT of the COMPLIANCE OFFICER AND COMMUNITY LIAISON,  Quarterly report: Section III Use of Force, 
+ROSENBAUM & ASSOCIATES, LLP. October 2017 to July 2018:
+
+*"PPB began collecting data on Force categories on August 19, 2017 (during Q3).  Data on categories was not collected for the whole of 2017 Q3 (thus explaining Category IV’s lower value in that quarter). The following 11 types of force are considered category II or III: *
+
+Control Hold with Injury (CHWI), 
+Baton – Strike, 
+Takedown, 
+Strikes/Kicks, 
+Impact Munition, 
+Less Lethal, 
+Aerosol Restraint,
+Conducted Energy Weapon (CEW), 
+K9 Bite, 
+Pursuit Intervention Technique (PIT), 
+Firearm Discharge (FD) – Aggressive Animal, 
+Vehicle Ramming. 
+
+The following 8 types of force are considered category IV``:
+Baton – Nonstrike, 
+Controlled Takedown, 
+Resisted Handcuffing, 
+Pointing of a Firearm (PFA), 
+Hobble Restraint, 
+Firearm Discharge (FD) – Wounded Animal, 
+Box-in, 
+Control Against Resistance. "*
+
+Now to collapes the remaining 7 force variables:
+
+```{r}
+#create new force2 variable to hold collapsed categories of force
+ppbforce_clean$force2_small_f <- (ppbforce_clean$force2)
+
+#ppbforce_clean %>%
+#  group_by(force2, force2_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "CEW", "taser2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force2, force2_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force3 variable to hold collapsed categories of force
+ppbforce_clean$force3_small_f <- (ppbforce_clean$force3)
+
+#ppbforce_clean %>%
+#  group_by(force3, force3_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "CEW", "taser2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force3, force3_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force4 variable to hold collapsed categories of force
+ppbforce_clean$force4_small_f <- (ppbforce_clean$force4)
+
+#ppbforce_clean %>%
+#  group_by(force4, force4_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "CEW", "taser2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force4, force4_small_f) %>%
+  summarise(n())
+
+```
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1, force1_small_f) %>%
+  summarise(n())
+
+```
+
+
+```{r}
+#create new force5 variable to hold collapsed categories of force
+ppbforce_clean$force5_small_f <- (ppbforce_clean$force5)
+
+#ppbforce_clean %>%
+#  group_by(force5, force5_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "CEW", "taser2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force5, force5_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force5 variable to hold collapsed categories of force
+ppbforce_clean$force6_small_f <- (ppbforce_clean$force6)
+
+#ppbforce_clean %>%
+#  group_by(force6, force6_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "CEW", "taser2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force6, force6_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force1 variable to hold collapsed categories of force
+ppbforce_clean$force7_small_f <- (ppbforce_clean$force7)
+
+#ppbforce_clean %>%
+#  group_by(force7, force7_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "CEW", "taser2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force7, force7_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force8 variable to hold collapsed categories of force
+ppbforce_clean$force8_small_f <- (ppbforce_clean$force8)
+
+#ppbforce_clean %>%
+#  group_by(force8, force8_small_f) %>%
+#  summarise(n())
+```
+
+```{r}
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "CEW", "taser2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force8, force8_small_f) %>%
+  summarise(n())
+```
+
+
+
+MAKE THE NEW VARS INTO FACTORS undone
+
+
+**1.B.1.b.  Create New Force Variables for Summing across incidents**
+
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1_small_f) %>%
+  summarise(n())
+```
+
+The following code creates 96 new variables, each of which indicates the occurrence (or not) of one kind of force (n = 12) during one time-slot (n = 8).
+
+```{r}
+ppbforce_clean$force1_cuffresist1	<- if_else(ppbforce_clean$force1_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force1_dogbite2	<- if_else(ppbforce_clean$force1_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force1_grab1	<- if_else(ppbforce_clean$force1_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force1_lethal2	<- if_else(ppbforce_clean$force1_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force1_pointgun2	<- if_else(ppbforce_clean$force1_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force1_strikekick2	<- if_else(ppbforce_clean$force1_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force1_takedown1		<- if_else(ppbforce_clean$force1_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force1_takedown2	<- if_else(ppbforce_clean$force1_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force1_taser2	<- if_else(ppbforce_clean$force1_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force1_teargas2	<- if_else(ppbforce_clean$force1_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force1_vehic1	<- if_else(ppbforce_clean$force1_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force1_vehic2	<- if_else(ppbforce_clean$force1_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force2_cuffresist1	<- if_else(ppbforce_clean$force2_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force2_dogbite2	<- if_else(ppbforce_clean$force2_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force2_grab1	<- if_else(ppbforce_clean$force2_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force2_lethal2	<- if_else(ppbforce_clean$force2_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force2_pointgun2	<- if_else(ppbforce_clean$force2_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force2_strikekick2	<- if_else(ppbforce_clean$force2_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force2_takedown1		<- if_else(ppbforce_clean$force2_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force2_takedown2	<- if_else(ppbforce_clean$force2_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force2_taser2	<- if_else(ppbforce_clean$force2_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force2_teargas2	<- if_else(ppbforce_clean$force2_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force2_vehic1	<- if_else(ppbforce_clean$force2_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force2_vehic2	<- if_else(ppbforce_clean$force2_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force3_cuffresist1	<- if_else(ppbforce_clean$force3_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force3_dogbite2	<- if_else(ppbforce_clean$force3_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force3_grab1	<- if_else(ppbforce_clean$force3_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force3_lethal2	<- if_else(ppbforce_clean$force3_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force3_pointgun2	<- if_else(ppbforce_clean$force3_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force3_strikekick2	<- if_else(ppbforce_clean$force3_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force3_takedown1		<- if_else(ppbforce_clean$force3_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force3_takedown2	<- if_else(ppbforce_clean$force3_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force3_taser2	<- if_else(ppbforce_clean$force3_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force3_teargas2	<- if_else(ppbforce_clean$force3_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force3_vehic1	<- if_else(ppbforce_clean$force3_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force3_vehic2	<- if_else(ppbforce_clean$force3_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force4_cuffresist1	<- if_else(ppbforce_clean$force4_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force4_dogbite2	<- if_else(ppbforce_clean$force4_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force4_grab1	<- if_else(ppbforce_clean$force4_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force4_lethal2	<- if_else(ppbforce_clean$force4_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force4_pointgun2	<- if_else(ppbforce_clean$force4_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force4_strikekick2	<- if_else(ppbforce_clean$force4_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force4_takedown1		<- if_else(ppbforce_clean$force4_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force4_takedown2	<- if_else(ppbforce_clean$force4_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force4_taser2	<- if_else(ppbforce_clean$force4_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force4_teargas2	<- if_else(ppbforce_clean$force4_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force4_vehic1	<- if_else(ppbforce_clean$force4_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force4_vehic2	<- if_else(ppbforce_clean$force4_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force5_cuffresist1	<- if_else(ppbforce_clean$force5_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force5_dogbite2	<- if_else(ppbforce_clean$force5_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force5_grab1	<- if_else(ppbforce_clean$force5_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force5_lethal2	<- if_else(ppbforce_clean$force5_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force5_pointgun2	<- if_else(ppbforce_clean$force5_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force5_strikekick2	<- if_else(ppbforce_clean$force5_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force5_takedown1		<- if_else(ppbforce_clean$force5_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force5_takedown2	<- if_else(ppbforce_clean$force5_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force5_taser2	<- if_else(ppbforce_clean$force5_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force5_teargas2	<- if_else(ppbforce_clean$force5_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force5_vehic1	<- if_else(ppbforce_clean$force5_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force5_vehic2	<- if_else(ppbforce_clean$force5_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force6_cuffresist1	<- if_else(ppbforce_clean$force6_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force6_dogbite2	<- if_else(ppbforce_clean$force6_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force6_grab1	<- if_else(ppbforce_clean$force6_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force6_lethal2	<- if_else(ppbforce_clean$force6_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force6_pointgun2	<- if_else(ppbforce_clean$force6_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force6_strikekick2	<- if_else(ppbforce_clean$force6_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force6_takedown1		<- if_else(ppbforce_clean$force6_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force6_takedown2	<- if_else(ppbforce_clean$force6_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force6_taser2	<- if_else(ppbforce_clean$force6_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force6_teargas2	<- if_else(ppbforce_clean$force6_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force6_vehic1	<- if_else(ppbforce_clean$force6_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force6_vehic2	<- if_else(ppbforce_clean$force6_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force7_cuffresist1	<- if_else(ppbforce_clean$force7_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force7_dogbite2	<- if_else(ppbforce_clean$force7_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force7_grab1	<- if_else(ppbforce_clean$force7_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force7_lethal2	<- if_else(ppbforce_clean$force7_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force7_pointgun2	<- if_else(ppbforce_clean$force7_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force7_strikekick2	<- if_else(ppbforce_clean$force7_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force7_takedown1		<- if_else(ppbforce_clean$force7_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force7_takedown2	<- if_else(ppbforce_clean$force7_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force7_taser2	<- if_else(ppbforce_clean$force7_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force7_teargas2	<- if_else(ppbforce_clean$force7_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force7_vehic1	<- if_else(ppbforce_clean$force7_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force7_vehic2	<- if_else(ppbforce_clean$force7_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force8_cuffresist1	<- if_else(ppbforce_clean$force8_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force8_dogbite2	<- if_else(ppbforce_clean$force8_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force8_grab1	<- if_else(ppbforce_clean$force8_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force8_lethal2	<- if_else(ppbforce_clean$force8_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force8_pointgun2	<- if_else(ppbforce_clean$force8_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force8_strikekick2	<- if_else(ppbforce_clean$force8_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force8_takedown1		<- if_else(ppbforce_clean$force8_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force8_takedown2	<- if_else(ppbforce_clean$force8_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force8_taser2	<- if_else(ppbforce_clean$force8_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force8_teargas2	<- if_else(ppbforce_clean$force8_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force8_vehic1	<- if_else(ppbforce_clean$force8_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force8_vehic2	<- if_else(ppbforce_clean$force8_small_f == "vehic2", 1, 0, missing = 0)
+
+#Let's just confirm these all worked by testing a random example
+ppbforce_clean %>%
+  group_by(force6_taser2) %>%
+  summarise (n())
+			
+			
+```
+
+OK.  Now we have 96 new force variables that take value = 1 if a particular kind of force occurred in sequence-slot 1 through 8, and zero otherwise.  Whoopee!
+
+Now let's create, for each force sequence-slot, a variable that contains the degree of force applied.
+
+```{r}
+ppbforce_clean$force1_degree	<- if_else(ppbforce_clean$force1_small_f == "dogbite2" | ppbforce_clean$force1_small_f == "lethal2" | ppbforce_clean$force1_small_f == "pointgun2" | ppbforce_clean$force1_small_f == "stikekick2" | ppbforce_clean$force1_small_f == "takedown2" |  ppbforce_clean$force1_small_f == "taser2" | ppbforce_clean$force1_small_f == "teargas2" | ppbforce_clean$force1_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force2_degree	<- if_else(ppbforce_clean$force2_small_f == "dogbite2" | ppbforce_clean$force2_small_f == "lethal2" | ppbforce_clean$force2_small_f == "pointgun2" | ppbforce_clean$force2_small_f == "stikekick2" | ppbforce_clean$force2_small_f == "takedown2" |  ppbforce_clean$force2_small_f == "taser2" | ppbforce_clean$force2_small_f == "teargas2" | ppbforce_clean$force2_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force3_degree	<- if_else(ppbforce_clean$force3_small_f == "dogbite2" | ppbforce_clean$force3_small_f == "lethal2" | ppbforce_clean$force3_small_f == "pointgun2" | ppbforce_clean$force3_small_f == "stikekick2" | ppbforce_clean$force3_small_f == "takedown2" |  ppbforce_clean$force3_small_f == "taser2" | ppbforce_clean$force3_small_f == "teargas2" | ppbforce_clean$force3_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force4_degree	<- if_else(ppbforce_clean$force4_small_f == "dogbite2" | ppbforce_clean$force4_small_f == "lethal2" | ppbforce_clean$force4_small_f == "pointgun2" | ppbforce_clean$force4_small_f == "stikekick2" | ppbforce_clean$force4_small_f == "takedown2" |  ppbforce_clean$force4_small_f == "taser2" | ppbforce_clean$force4_small_f == "teargas2" | ppbforce_clean$force4_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force5_degree	<- if_else(ppbforce_clean$force5_small_f == "dogbite2" | ppbforce_clean$force5_small_f == "lethal2" | ppbforce_clean$force5_small_f == "pointgun2" | ppbforce_clean$force5_small_f == "stikekick2" | ppbforce_clean$force5_small_f == "takedown2" |  ppbforce_clean$force5_small_f == "taser2" | ppbforce_clean$force5_small_f == "teargas2" | ppbforce_clean$force5_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force6_degree	<- if_else(ppbforce_clean$force6_small_f == "dogbite2" | ppbforce_clean$force6_small_f == "lethal2" | ppbforce_clean$force6_small_f == "pointgun2" | ppbforce_clean$force6_small_f == "stikekick2" | ppbforce_clean$force6_small_f == "takedown2" |  ppbforce_clean$force6_small_f == "taser2" | ppbforce_clean$force6_small_f == "teargas2" | ppbforce_clean$force6_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force7_degree	<- if_else(ppbforce_clean$force7_small_f == "dogbite2" | ppbforce_clean$force7_small_f == "lethal2" | ppbforce_clean$force7_small_f == "pointgun2" | ppbforce_clean$force7_small_f == "stikekick2" | ppbforce_clean$force7_small_f == "takedown2" |  ppbforce_clean$force7_small_f == "taser2" | ppbforce_clean$force7_small_f == "teargas2" | ppbforce_clean$force7_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force8_degree	<- if_else(ppbforce_clean$force8_small_f == "dogbite2" | ppbforce_clean$force8_small_f == "lethal2" | ppbforce_clean$force8_small_f == "pointgun2" | ppbforce_clean$force8_small_f == "stikekick2" | ppbforce_clean$force8_small_f == "takedown2" |  ppbforce_clean$force8_small_f == "taser2" | ppbforce_clean$force8_small_f == "teargas2" | ppbforce_clean$force8_small_f == "vehic2", 2, 1, missing = 0)
+
+
+ppbforce_clean %>%
+  group_by(force1_degree) %>%
+  summarise (n())
+
+ppbforce_clean %>%
+  group_by(force2_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force3_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force4_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force5_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force6_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force7_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force8_degree) %>%
+  summarise (n())
+```
+Excellent, that worked.  
+
+We already have the variable, *force_officer_sum*, that counts the total number of times force was applied during each officer-civilian interaction.
+
+Now let's sum up the total value of the degrees of force that were applied during the interaction:
+
+
+```{r}
+ppbforce_clean$force_degree_sum <- (ppbforce_clean$force1_degree + ppbforce_clean$force2_degree + ppbforce_clean$force3_degree + ppbforce_clean$force4_degree + ppbforce_clean$force5_degree + ppbforce_clean$force6_degree + ppbforce_clean$force7_degree + ppbforce_clean$force8_degree)
+
+ppbforce_clean %>%
+  group_by(force_degree_sum) %>%
+  summarise (n())
+
+```
+This worked.  4 interactions reached the theoretical maximum: level 2 force X 8 applications
+
+Now, finally, let's create a variable that calculates the highest level of force used during an interaction.
+
+```{r}
+ppbforce_clean$force_degree_max	<- if_else(ppbforce_clean$force1_degree == 2 | ppbforce_clean$force2_degree == 2 | ppbforce_clean$force3_degree == 2 | ppbforce_clean$force4_degree == 2 | ppbforce_clean$force5_degree == 2 |  ppbforce_clean$force6_degree == 2 | ppbforce_clean$force7_degree == 2 | ppbforce_clean$force8_degree == 2, 2, 1, missing = 0)
+
+ppbforce_clean %>%
+  group_by(force_degree_max) %>%
+  summarise(n())
+
+```
+That worked and no missing values, as expected.
+
+**1.B.1.b.  Create New Resistance Variables for Summing across Incidents**
+
+Resistance variables describe a civilians (perceived) uncooperative response to each officer's presence, orders, and actions.  Up to 8 instances of resistance can be reported by each officer, and each instance can take one of 6 values: Active, Aggressive, Deadly, Passive, None, and NA.  
+
+We need to create 6 x 8 = 48 new variables to count the number of times each level of resistance occurred during an incident.  From these, we can create 6 more variables to indicate *any* reporting of each type of resistance during an incident.  That's a total of 54 new resistance variables.
+
+As a reminder, here are the levels in the resistance variables:
+
+```{r}
+ppbforce_clean %>%
+  group_by(resist1) %>%
+  summarise(n())
+
+```
+
+I will assign both NA and None to zero, and rank passive, active, aggressive, and deadly from 1 to 4, respectively.  First step is create variables for each degree or resistance within each time slot.  However, unlike with force, because each kind of resistance has its own unique degree of resistance, rather than assigning 1 to each occurrence I will assign a number corresponding to the degree, i.e, 1,  2, 3, 4 or 5, with NA = 0.  Giving *none* a value = 1 allows us to preserve the distinction between *none* and *NA*.  Later, when summing up the degrees of force, we can subtract 1 to bring *none* bake to zero.  
+
+
+```{r}
+
+ppbforce_clean$resist1_active3	<- if_else(ppbforce_clean$resist1 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist1_aggress4	<- if_else(ppbforce_clean$resist1 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist1_deadly5	<- if_else(ppbforce_clean$resist1 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist1_passive2	<- if_else(ppbforce_clean$resist1 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist1_none1	<- if_else(ppbforce_clean$resist1 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist2_active3	<- if_else(ppbforce_clean$resist2 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist2_aggress4	<- if_else(ppbforce_clean$resist2 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist2_deadly5	<- if_else(ppbforce_clean$resist2 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist2_passive2	<- if_else(ppbforce_clean$resist2 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist2_none1	<- if_else(ppbforce_clean$resist2 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist3_active3	<- if_else(ppbforce_clean$resist3 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist3_aggress4	<- if_else(ppbforce_clean$resist3 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist3_deadly5	<- if_else(ppbforce_clean$resist3 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist3_passive2	<- if_else(ppbforce_clean$resist3 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist3_none1	<- if_else(ppbforce_clean$resist3 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist4_active3	<- if_else(ppbforce_clean$resist4 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist4_aggress4	<- if_else(ppbforce_clean$resist4 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist4_deadly5	<- if_else(ppbforce_clean$resist4 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist4_passive2	<- if_else(ppbforce_clean$resist4 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist4_none1	<- if_else(ppbforce_clean$resist4 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist5_active3	<- if_else(ppbforce_clean$resist5 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist5_aggress4	<- if_else(ppbforce_clean$resist5 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist5_deadly5	<- if_else(ppbforce_clean$resist5 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist5_passive2	<- if_else(ppbforce_clean$resist5 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist5_none1	<- if_else(ppbforce_clean$resist5 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist6_active3	<- if_else(ppbforce_clean$resist6 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist6_aggress4	<- if_else(ppbforce_clean$resist6 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist6_deadly5	<- if_else(ppbforce_clean$resist6 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist6_passive2	<- if_else(ppbforce_clean$resist6 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist6_none1	<- if_else(ppbforce_clean$resist6 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist7_active3	<- if_else(ppbforce_clean$resist7 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist7_aggress4	<- if_else(ppbforce_clean$resist7 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist7_deadly5	<- if_else(ppbforce_clean$resist7 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist7_passive2	<- if_else(ppbforce_clean$resist7 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist7_none1	<- if_else(ppbforce_clean$resist7 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist8_active3	<- if_else(ppbforce_clean$resist8 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist8_aggress4	<- if_else(ppbforce_clean$resist8 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist8_deadly5	<- if_else(ppbforce_clean$resist8 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist8_passive2	<- if_else(ppbforce_clean$resist8 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist8_none1	<- if_else(ppbforce_clean$resist8 == "None", 1, 0, missing = 0)
+
+```
+
+```{r}
+ppbforce_clean %>%
+  group_by(resist4_aggress4) %>%
+  summarise(n())
+
+```
+
+This appears to have worked.  (The same basic code worked for the force variables so it is presumably OK.)  
+
+Now let's create a variable that calculates the degree of resistance during each time slot:
+
+
+```{r}
+ppbforce_clean$resist1_degree <- if_else (!is.na(ppbforce_clean$resist1), (ppbforce_clean$resist1_active3 + ppbforce_clean$resist1_aggress4 + ppbforce_clean$resist1_deadly5 + ppbforce_clean$resist1_passive2 + ppbforce_clean$resist1_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist1_degree) %>%
+  summarise(n())
+
+```
+That worked.  Now, repeat the calculation of degrees of resistance by timeslot, for each timeslot:
+
+```{r}
+ppbforce_clean$resist2_degree <- if_else (!is.na(ppbforce_clean$resist2), (ppbforce_clean$resist2_active3 + ppbforce_clean$resist2_aggress4 + ppbforce_clean$resist2_deadly5 + ppbforce_clean$resist2_passive2 + ppbforce_clean$resist2_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist2_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist3_degree <- if_else (!is.na(ppbforce_clean$resist3), (ppbforce_clean$resist3_active3 + ppbforce_clean$resist3_aggress4 + ppbforce_clean$resist3_deadly5 + ppbforce_clean$resist3_passive2 + ppbforce_clean$resist3_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist3_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist4_degree <- if_else (!is.na(ppbforce_clean$resist4), (ppbforce_clean$resist4_active3 + ppbforce_clean$resist4_aggress4 + ppbforce_clean$resist4_deadly5 + ppbforce_clean$resist4_passive2 + ppbforce_clean$resist4_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist4_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist5_degree <- if_else (!is.na(ppbforce_clean$resist5), (ppbforce_clean$resist5_active3 + ppbforce_clean$resist5_aggress4 + ppbforce_clean$resist5_deadly5 + ppbforce_clean$resist5_passive2 + ppbforce_clean$resist5_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist5_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist6_degree <- if_else (!is.na(ppbforce_clean$resist6), (ppbforce_clean$resist6_active3 + ppbforce_clean$resist6_aggress4 + ppbforce_clean$resist6_deadly5 + ppbforce_clean$resist6_passive2 + ppbforce_clean$resist6_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist6_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist7_degree <- if_else (!is.na(ppbforce_clean$resist7), (ppbforce_clean$resist7_active3 + ppbforce_clean$resist7_aggress4 + ppbforce_clean$resist7_deadly5 + ppbforce_clean$resist7_passive2 + ppbforce_clean$resist7_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist7_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist8_degree <- if_else (!is.na(ppbforce_clean$resist8), (ppbforce_clean$resist8_active3 + ppbforce_clean$resist8_aggress4 + ppbforce_clean$resist8_deadly5 + ppbforce_clean$resist8_passive2 + ppbforce_clean$resist8_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist8_degree) %>%
+  summarise(n())
+
+```
+
+Success!  Now let's sum the degrees of resistance across all timeslots:
+
+```{r}
+ppbforce_clean$resist_degree_sum <- with(ppbforce_clean, resist1_degree + resist2_degree + resist3_degree + resist4_degree + resist5_degree + resist6_degree + resist7_degree + resist8_degree)
+
+ppbforce_clean %>%
+  group_by(resist_degree_sum) %>%
+  summarise(n())
+
+```
+That worked.  Highest total of degrees is 24.
+
+Finally, let's create variables that indicate whether ANY resistance was recorded within a timeslot:
+
+```{r}
+ppbforce_clean$resist1_any <- if_else(ppbforce_clean$resist1 >1, 1, 0, missing = 0)
+  #remember that no resistance = 1 in the resist1 through resist 8 variables
+ppbforce_clean$resist2_any <- if_else(ppbforce_clean$resist2 >1, 1, 0, missing = 0)
+ppbforce_clean$resist3_any <- if_else(ppbforce_clean$resist3 >1, 1, 0, missing = 0)
+ppbforce_clean$resist4_any <- if_else(ppbforce_clean$resist4 >1, 1, 0, missing = 0)
+ppbforce_clean$resist5_any <- if_else(ppbforce_clean$resist5 >1, 1, 0, missing = 0)
+ppbforce_clean$resist6_any <- if_else(ppbforce_clean$resist6 >1, 1, 0, missing = 0)
+ppbforce_clean$resist7_any <- if_else(ppbforce_clean$resist7 >1, 1, 0, missing = 0)
+ppbforce_clean$resist8_any <- if_else(ppbforce_clean$resist8 >1, 1, 0, missing = 0)
+
+ppbforce_clean %>%
+  group_by(resist1_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist2_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist3_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist4_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist5_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist6_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist7_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist8_any) %>%
+  summarise(n())
+```
+
+And, finally, finally, let's create a variable that counts the number of timeslots during which resistance occurred, for each officer-civilian interaction:
+
+```{r}
+ppbforce_clean$resist_any_sum <- (ppbforce_clean$resist1_any + ppbforce_clean$resist2_any + ppbforce_clean$resist3_any + ppbforce_clean$resist4_any + ppbforce_clean$resist5_any + ppbforce_clean$resist6_any + ppbforce_clean$resist7_any + ppbforce_clean$resist7_any)
+
+ppbforce_clean %>%
+  group_by(resist_any_sum) %>%
+  summarise(n())
+```
+Success.  But the 8 zeroes are really NAs.  So let's change them to NA:
+
+```{r}
+
+ppbforce_clean$resist_any_sum <- ppbforce_clean$resist_any_sum %>% na_if(0)
+
+ppbforce_clean %>%
+  group_by(resist_any_sum) %>%
+  summarise(n())
+
+```
+
+**1.B.1.c.  Create New Race Variables for Summing within incidents**
+
+The variable, *civil_race*, has several mutually exclusive categories.  We could just use the value that would be retained among the trans-incident variables in the starter incident-level dataset, but there might be disagreements among officers about race so, in order to study that, let's also create race-value specific variables that can sum across FDCRs.  Later, in analysis, we can divide these sums by the number of officers to detect incidents in which reports disagree.
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(civil_race) %>%
+  summarise(n())
+```
+
+```{r}
+ppbforce_clean$race_asian	<- if_else(ppbforce_clean$civil_race == "Asian", 1, 0, missing = 0)
+ppbforce_clean$race_black	<- if_else(ppbforce_clean$civil_race == "Black", 1, 0, missing = 0)
+ppbforce_clean$race_hisp	<- if_else(ppbforce_clean$civil_race == "Hispanic", 1, 0, missing = 0)
+ppbforce_clean$race_native	<- if_else(ppbforce_clean$civil_race == "Native American", 1, 0, missing = 0)
+ppbforce_clean$race_white	<- if_else(ppbforce_clean$civil_race == "White", 1, 0, missing = 0)
+
+ppbforce_clean %>%
+  group_by(race_asian) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_black) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_hisp) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_native) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_white) %>%
+  summarise(n())
+
+```
+
+
+**1.B.1.d.  Create New Mental Health, ETOH, and Drug Variables for Summing within Incidents**
+
+In the case of *civil_mental*, FDCRs might differ and, because mental distress is difficult to recognize and under-recognized by officers, we want to count cases as "mental" if ANY officer perceives mental distress.  When merging data, hopefully I can find an "any" argument that can be used similarly to "sum" to combine observations.  The same rationale applies to *civil_etoh* and *civil_drug*.
+
+
+```{r}
+ppbforce_clean$incid_mental_any <- ppbforce_clean$civil_mental
+
+ppbforce_clean$incid_etoh_any <- ppbforce_clean$civil_etoh
+
+ppbforce_clean$incid_drug_any <- ppbforce_clean$civil_drug
+
+```
+
+**1.B.1.e.  Create New Transience Variable for Summing within Incidents**
+
+Transience is report as Yes if an officer cannot ascertain a permanent address for a civilian.  Possibly, one reporting officer might get an address when another did not.  What we need to add is a variable that we can use to make transience = No if ANY officer is able to find a permanent address.
+
+Note that *civil_transient* is not a 0/1 var, it is Yes/No/NA.  Unlike mental, drug, and etoh, which are 0/1.  The *incid_housed* var created below IS 0/1.
+
+
+
+```{r}
+ppbforce_clean$incid_housed <- if_else(ppbforce_clean$civil_transient == "No", 1, 0, missing = 1)  
+                                          
+ppbforce_clean %>%
+  group_by (incid_housed) %>%
+  summarise(n())
+                                           
+                                          
+```
+
+
+**1.B.1.f.  Create New Tenure Variables for Summing within Incidents**
+
+Officers participating in a use-of-force incident have varying tenure and by picking one officer's at random we get no information about the tenure of the other involved officers.  We and avoid losing tenure info about the other officers by calculation the mean of *officer_tenure* when we merge data. We can also obtain the longest tenure for an incident, and the shortest.  Let's create new placeholder variables that will allow us to do that. (The actual calculations will occur in Step 3, the group-and-merge process.)
+
+```{r}
+ppbforce_clean$incid_tenure_mean <- ppbforce_clean$officer_tenure
+ppbforce_clean$incid_tenure_max <- ppbforce_clean$officer_tenure
+ppbforce_clean$incid_tenure_min <- ppbforce_clean$officer_tenure
+
+#ppbforce_clean %>%
+#  group_by (incid_tenure_mean) %>%
+#  summarise(n())
+
+#tail(ppbforce_clean$incid_tenure_mean) #note: there are 7 missing values in these vars
+```
+This worked but there is no point in showing the (large) tables because the var is numeric. There are 7 missing values.
+
+
+**1.B.1.f.  Create New Variable for Summing Number of Officers per Incident**
+
+All that's needed here is to create a new variable and set its value = 1 for all observations.  We can sum it by incident when we merge the datasets.
+
+```{r}
+ppbforce_clean$incid_officer_sum <- ppbforce_clean$incid_housed
+ppbforce_clean$incid_officer_sum <- if_else(ppbforce_clean$incid_housed == 0, 1, 1)
+
+ppbforce_clean %>%
+  group_by(incid_officer_sum)  %>%
+  summarise(n())
+
+```
+That worked.  Each officer report counts as 1 officer, no NAs, and no values other than 1.
+
+
+**I.C.  Pre-Sorting the Source Dataset.**
+
+When the R function, *distinct()*, is applied to a dataframe, only the FIRST record (row) in a duplicated group is retained.  Another preliminary step in preparing the report-level source dataset for conversion to an episode-based dataset is to sort the *ppbforce_clean* dataset so that the first row in any episode's group of reports is likely to have the most accurate values for episode-wide descriptors.  As a reminder, the episode-wide descriptors in *ppbforce_clean* are:   
+
+"civil_age"                  
+"civil_age_f"                    
+"civil_id"                   
+"civil_instance"            
+"civil_sex"                 
+"incid_day"                  
+"incid_disp"                          
+"incid_force_lev"            
+"incid_id"                   
+"incid_month"               
+"incid_sixhour"              
+"incid_year"                 
+"recordcount_1"             
+"recordcount_2"  
+"call_detail"        
+"call_group"                
+"call_source"  
+
+
+In a previous look at the data, I did find numerous cases in which values for variables that should be the same in each report of an incident were not identical.  There is little basis to expect one officer's report to be more accurate than another's on such basic matters as age, sex, and time of day.  A simple way to sort would be by officer id number, which is said by PPB to have been randomly assigned in these data.  However, it might be better to select the officer who reported the most inflictions of force, because data describing one officer's encounter will be merged into the final incident dataset in Step 3, and it might as well be the officer who used the most force.  Also, through September 2021, 2 pairs of rows in the data have the same officer ID within a single encounter.  These are cases in which an officer used force more than 8 times, so he or she filed a second use of force report to describe all the uses.  (These cases are indicated by *recordcount1* and *recordcount2* = 2.)  Sorting by *force_officer_sum* will ensure that the most important of these two rows stays on top.  
+
+To provide a tiebreaker when multiple officers report the same number of force inflictions, I will use *officer_id* as the third sorting variable.
+
+The following code sorts the source dataset:
+
+```{r}
+
+# note: incid_id is ascending order, officer_id and force_officer_sum and descending, ie, larger first
+ppbforce_clean <- ppbforce_clean[order(ppbforce_clean$incid_id, -ppbforce_clean$force_officer_sum,-ppbforce_clean$officer_id), ]
+
+showsort <- ppbforce_clean[,c("incid_id",  "force_officer_sum", "officer_id")]
+showsort
+remove(showsort)
+
+```
+Appears to have worked.  incid_id = 12555768 is one of the incidents for which 2 reports were filed. It is properly sorted by force_officer_sum.
+
+
+**II. Step 2. CREATE FOUNDATION FOR AN INCIDENT-LEVEL DATASET** 
+
+
+    
+
+**II. A.  CREATE SUBSET OF DATA THAT RETAINS ONLY TRANS-INCIDENT VARIABLES**
+
+
+Next I create a dataset that contains the incident-level variables from the original officer-level dataset.  These are the variables whose values should be identical in all reports of a given incident.
+
+In addition, I have elected to include certain variables that describe single officers, the actions of single officers, or the actions of the civilian (resistance) as perceived a single officer. These data cannot describe the totality of the overall encounter but, because we will be selecting the incident-level variables as they were reported by the officer who imposed the most force during the incident (see below), including key officer-level variables will preserve important information within the incident dataset, i.e., the actions of the most-involved officer.  The officer-level variables to be included are: *"officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8".*
+
+For reference, here is a list of all the variables from which the starter incident dataset will be selected:
+
+```{r}
+ls(ppbforce_clean
+  )
+```
+
+```{r}
+incident <- ppbforce_clean[,c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev", "incid_id", "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8")]    
+
+head(incident, n = 10)
+```
+
+
+**II. B.  ELIMINATE ALL BUT ONE REPORT PER INCIDENT**
+
+The *distinct()* function in R eliminates rows (observations) that have duplicate values on a specified variable.  See https://dplyr.tidyverse.org/reference/distinct.html   Other variables can be protected from the duplication elimination by the argument *.keep_all = TRUE*  This will allow us to eliminate all but one FDRC report for each use-of-force incident without unintentionally failing to eliminate rows that have minor differences due to errors or disagreements between officers making reports. 
+
+```{r}
+
+incident_unique <- distinct(incident, incid_id, .keep_all = TRUE)
+
+head(incident_unique, n = 50)
+
+```
+3335 observations, down from 7255.  This appears to have worked! To check, let's count the number of unique incid_id's and see if it is the same = 3335.
+
+```{r}
+count(incident, incid_id)
+```
+This confirms that the *distinct()* function worked as intended. 3335 rows = 3335 rows.
+
+To be clear, we have now created a dataset with one observation per incident.  The trans-incident data that it contains were retained from the first observation in each group of observations describing the same incident.  The decision about which observation is first was made by sorting the dataset within incid_id's by officer_id, a supposedly randomly generated ID number.  Because we have no basis for deciding which officer's report is correct when there is a difference among officer's reports, picking one is as good as picking another.  (Reports generally agree on all trans-incident variables, but sometimes data are missing in one report or recorded differently.)
+
+
+---------------------------
+The following are notes from conversation with Ray Brunner about an alternative way to retain only the first duplicated row in the event that minor differences between the rows made unique() think they were not duplicates.  I elected instead to use the distinct() function but I want to retain this code for the record.
+
+#but first make sure newtable is unique (no rows that are dups but look like they are not because some value differs)
+# but this removes the last dup, does not keep both
+# this table is for investigation only, and it only removes the first of a duplicate pair or triple or...
+#PLUS all the unduplicaterd rows
+newtable_uncorrected_dups_only <- newtable[duplicated(newtable$incid_id),]  #square brackets subset the dataset, 
+  #r before c, sep by comma 
+
+#take first row for keepers
+newtable_first_dup_only <- newtable[!duplicated(newtable$incid_id),] 
+#this is a table of unique incident id with the data pulled from the first row containing that incid_id
+
+ppbforce_clean_by_incid_id  <- newtable_first_dup_only
+---------------------------
+
+
+
+
+
+
+**III. STEP 3.  Merge with remaining ppbforce_clean variables by summing variable values into one row.**
+
+**III. A. Remove the Variables Were Shifted to *incident_unique* **
+
+First, we need to remove from *ppbforce_clean* the variables that we previously put into the *incident_unique* dataset, except for *incid_id*, which will be our matching variable.
+
+```{r}
+
+ppbforce_fdcr_to_merge <- select(ppbforce_clean, - c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev",  "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "force1_small_f", "force2_small_f", "force3_small_f", "force4_small_f", "force5_small_f", "force6_small_f", "force7_small_f", "force8_small_f","resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8"))
+
+```
+
+```{r}
+ls(ppbforce_fdcr_to_merge)
+
+```
+
+Success!  Funny how the big actions take one simple line of code and the piddly stuff can get complicated.  (The little negative sign in front of the c() is why this code removes rather than extracts the listed variables.)
+
+
+**III.B. Aggregate the FDCR Data up to the Incident Level**
+
+How we aggregate depends on the variable.  We can aggregate by 
+
+(a) adding up values, i.e., when we want to get the sum of actions, particularly force and resist actions, or the number of officers involved in an incident; by
+
+(b) averaging values, which works for the measured variable, officer tenure; and by
+
+(c) selecting the max or min value.  
+
+Min and, especially, max, works well for 1/0 variables to create variables that record *any* occurrence of an event or characteristic.  Of course, it also works if we want to know, say, the longest-tenured officer involved in an incident, or the shortest-tenured.  
+
+The code below shows which variables I aggregated by which method.  The *group_by(incid_id)* says that the aggregation occurs only incident by incident.  We should end up with a data that has exactly as many rows as the *incident_unique* dataset, which is 3335 for the PPB use-of-force data ending in 3rd Quarter, 2021.
+
+```{r}
+
+ppbforce_fdcr_to_merge <-  ppbforce_fdcr_to_merge %>%
+  group_by(incid_id) %>%
+  summarize(
+    
+    #across(matches(c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev", "incid_id", "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8"), first)),
+    
+    across(matches("incid_tenure_mean"), mean, na.rm = T),
+    
+    across(matches("incid_officer_sum"), sum, na.rm = F),
+    
+    across(matches("incid_tenure_min"), min),
+    
+    across(matches("incid_tenure_max"), max),
+                     
+    across(matches("force_degree_max"), max),                 
+    
+    across(matches(c("resist1_any", "resist2_any", "resist3_any", "resist4_any", "resist5_any", "resist6_any", "resist7_any", "resist8_any")), max),
+    
+    across(ends_with("degree"), max),
+    
+    across(starts_with("race"), max),
+    
+    across(matches(c("incid_drug_any", "incid_etoh_any", "incid_mental_any", "incid_housed")), max),
+    
+    across(matches(c("threat_biohaz", "threat_blunt", "threat_gun", "threat_gun_implied", "threat_gun_replica", "threat_other", "threat_unarmed", "threat_unused_weapon")), max),
+    
+    across(ends_with(c("cuffresist1", "dogbite2", "grab1", "lethal2", "pointgun2", "strikekick2", "takedown1", "takedown2", "taser2", "teargas2", "vehic1", "vehic2")), sum, na.rm = F),
+    
+    #the vars in nextline take value 0 to 4 depending on the var (varname minus 1)  
+    across(ends_with(c("active3", "aggress4", "deadly5", "none1", "passive2")), max),
+    
+    across(matches(c("resist_degree_sum", "resist_any_sum")), sum, na.rm = T),
+    
+    across(matches(c("force_degree_sum", "threat_sum")), sum, na.rm = F),
+    
+    #The vars in nextline take values of 0, 1, 2 depending on calculated degree of force used
+    across(matches(c("force1_degree", "force2_degree", "force3_degree", "force4_degree", "force5_degree", "force6_degree", "force7_degree", "force8_degree")), max)
+  )
+
+#head(ppbforce_fdcr_to_merge)
+
+#count(ppbforce_fdr_to_merge)
+
+```
+
+undone  WEIRD THINGS HAPPENED TO FORCE_DEGREE_MAX UNTIL I SEPARATED IT OUT INTO ITS OWN LINE OF CODE, IN THE ABOVE CHUNK.  I NEVER COULD FIGURE OUT THE REASON.  TO BE SAFE, SHOULD CHECK THE OTHER LINES INVOLVING CONCATENATED VECTORS OF VARS, AND THE MAX ARGUMENT.  ARE THEY ALL WORKING AS EXPECTED?
+
+----------
+ray's code:
+output <- ppbforce_clean %>% group_by(incid_id) %>% summarise(officer_num = n())
+
+#ray's code
+#ppbforce_incident <- merge(ppbforce_clean_by_incid_id, output)
+
+ray's code:
+output <- ppbforce_clean_q321 %>% group_by(incid_id) %>% summarise(incid_force_sum = sum(force_officer_sum))
+
+ppbforce_clean_q321_by_incid_id <- merge(ppbforce_clean_q321_by_incid_id, output)
+
+----------
+
+
+**III.C. Combine the *ppbforce_fdcr_to-merge* Dataset with the *incident_unique* Dataset **
+
+Now for the final merge to create an incident-level dataset for the PPB use-of-force data.  
+
+```{r}
+ppbforce_incident_ds <- inner_join(ppbforce_fdcr_to_merge, incident_unique, by = "incid_id", suffix = c(".o", ".i"), keep = TRUE)
+
+head(ppbforce_incident_ds)
+
+count(ppbforce_incident_ds)
+```
+
+Looks good.  N = 3335, what we wanted.
+
+To be sure, let's compare the *incid_id* from each dataset:
+
+```{r}
+mergetest <- ppbforce_incident_ds %>%
+ select("incid_id.o", "incid_id.i") 
+mergetest
+```
+OK.  This proven, I will now remove the duplicate *incid_id* variable and rename the other one back to *incid_id*.
+
+```{r}
+ppbforce_incident_ds <- select(ppbforce_incident_ds, - "incid_id.o")
+
+ppbforce_incident_ds$incid_id <- ppbforce_incident_ds$incid_id.i
+```
+
+```{R}
+
+ppbforce_incident_ds %>% select(incid_id, everything())
+
+#head(ppbforce_incident_ds)
+                               
+```
+
+
+Finally, I will / You should rename the dataset to match the most recent year and quarter of your data.  "dofirst"
+
+```{r}
+ppbforce_incident_ds_321 <- ppbforce_incident_ds
+
+ppbforce_incident_ds_321
+
+```
+
+```{r}
+ls(ppbforce_incident_ds_321)
+```
+
+Finally finally, I will create save the dataset as an R dataframe and also save a permanent CSV version for uploading into other scripts and downloading.
+
+```{r}
+save(ppbforce_incident_ds_321, file = "ppbforce_incident_ds_321.RData")
+
+write.csv(ppbforce_incident_ds_321, file = "ppbforce_incident_ds_321.csv")
+```
+
+=======
+---
+title: "Creating a Civilian-Level (Incident-Level) PPB Use of Force Dataset"
+author: "Jonathan Brown with help from Ray Brunner"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+IMPORTANT: SEARCH ON THE STRING, dofirst, TO IDENTIFY PLACES WHERE YOU MUST CHANGE THE SCRIPT IF YOU ARE PROCESSING A NEW QUARTERLY UPDATE OF THE CLEANED SINGLE-OFFICER-REPORT-LEVEL PPB FORCE DATASET.
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+library(ggplot2)
+
+```
+
+**MOTIVATION**
+
+The publicly available Portland Police Bureau Use of Force dataset is organized at the use of force report (FDCR) level.  That is, each row of the dataset describes one officer's report on one interaction with one civilian at one time and place.  
+
+However, many use-of-force incidents involve more than one officer interacting with a civilian.  A more realistic description of use of force would combine the actions of all involved officers.  This would provide a description of use of force from the civilian's perspective. It also would describe what an outside observer would see, and it provides an accounting of overall police bureau behavior.  The R code described and executed within this notebook does this.
+
+
+**OVERVIEW OF METHOD**
+
+The 3-step programming strategy to do this was suggested by Ray Brunner.  The program below is an evolution of her idea.
+
+Step 1.  The first step is to create a starter dataset at the incident-level.  I use the *distinct()* function in R to select a dataset that retains only one row of data for each multi-officer incident with one civilian.  The variables selected into this dataset, called *incident_unique*, are ones that should have been reported identically by each officer, namely, variables describing the civilian, the time and day of the event, the origin and type of call that caused officers to confront the civilian, and the result of the incident, such as arrest, hospitalization, and release.  
+
+Variables that describe just one officer, or just one officer's interaction with the civilian, are left out of the starter dataset because these must be summed up across officers, or combined in other ways to create an overall description of the use-of-force incident.
+
+Step 2.  Meanwhile, among the variables not moved into *incident_unique*, I create additional variables that I can, in Step 3, combine from individual officers' reports to create summaries of events during multi-officer incidents.  Examples of the many such composite variables include the number of officers involved in an incident and the total number each kind of forceful action taken by all those officers combined.  
+
+Step 3.  In the third and final step, I use the R *inner_join()* and *group_by* functions to summarize data within each *incid_id* while appending the result to the *incident_unique* dataset.  This yields a single dataset, with one row of data per *incid_id*, that includes and summarizes all available data for each incident.
+
+The input dataset is *ppbforce_clean_q321.csv* or its successor, that is, the cleaned and improved officer-report_level dataset previously created by the *ppb_force_notebook_3_initial_wrangling.Rmd* script.  As PPB releases extended and updated use-of-force datasets each quarter, the R script contained in this document can be reused without modification.  Immediately below is the code that reads in *ppbforce_clean_q321.csv* or its successor, and creates a generically named dataset for further manipulation.  (The generic dataset is converted back to a date-of-download-specific incident-level dataset at the end of this script.)  *dofirst*
+
+
+```{r}
+ppbforce_clean <- read_csv("ppbforce_clean_q321.csv")
+ppbforce_clean %>%
+  summarise(n())
+```
+
+
+A note on terminology used within this project:  To reduce confusion, and hopefully not to increase it(!), one application of force on one civilian by one officer is termed an INTERACTION or an INFLICTION.  The sum of all interactions by one officer on one civilian is called an ENCOUNTER.  The combination of all encounters by multiple officers on one civilian is called an INCIDENT.
+
+
+**I. CREATE STARTER incident-LEVEL DATASET**
+
+**I.A.  Variables to Include As-Is in the Starter Dataset**
+
+*I.A.1.  Stable Variables.*  In principle, true incident-level descriptors should take the same values in all officers' descriptions of an incident.  However, different officers might perceive, observe, or enter different data, and analysts can make mistakes in data entry.  Where conflicts appear among officer-reports, it cannot be known, from the data themselves, which officer's entry is correct.  Therefore, we must pick one value as best we can and accept that a summary, incident-level dataset will perpetuate some of errors in the source data.  
+
+Here is a list of the variables that should be identical in all officers' reports of the same incident.  
+
+          
+"civil_age"                  
+"civil_age_f"                    
+"civil_id"                   
+"civil_instance"            
+"civil_sex"                 
+"incid_day"                  
+"incid_disp"                          
+"incid_force_lev"            
+"incid_id"                   
+"incid_month"               
+"incid_sixhour"              
+"incid_year"                 
+"recordcount_1"             
+"recordcount_2"    
+
+(Incident force level (maximum level of force used, *incid_force_level*) is uncertain of origin but I believe it is assigned at the incident-level when supervising officers review and approve individual officer's encounter-reports.  In any event, for data analysis purposes, I develop below an substitute force-level classification algorithm, based solely on data internal to the officer-reports.  Therefore, any problems and ambiguities with *incid_force_lev* can be ignored.)
+
+
+*I.A.2  Call Variables.*  Conceivably, different officers could have arrived on the scene in response to different 911 calls or police dispatch orders.  Or, an officer might face a difficult situation and request backup.  We could leave the *call_* vars in the original dataset and calculate new variables that indicate whether multiple calls occurred during the incident, and what these calls were.  This would be a complex endeavor that would not yield variables that I anticipate using.  Therefore, I have elected to treat the following Call Variables as incident-level descriptors that can be obtained from any officer's report.  (When selecting the particular officer whose data I will use, I will sort the data so that the officer with the most inflictions of force is selected.)
+
+"call_detail"        
+"call_group"                
+"call_source"     
+
+
+**I.B.  Incident-Level Variables to EXCLUDE from the Starter Dataset**
+
+
+*I.B.1.  Transience / Houselessness.*  Transience (*civil_transient*) is determined in PPB data by not having an address for the civilian recorded in an officer's report.  Non-reporting can arise because a civilian lack housing OR because the civilian does not provide an address or the officer does not collect it.  Conceivably, one reporting officer might get an address and the others, not.  About half of all officers' reports lack an address; surely, many of most of these civilians are not living on the street.  Let's therefore leave *civil_transient* out of the starter dataset and instead create (in Step 2) a composite variable that indicates housing if ANY officer's report says *civil_transient* = 0, i.e., provides an address.
+
+
+**I.B.2. Important Subject Attributes.**  The following vars are about inherent civilian characteristics that are either impossible to observe with precision (mental status, etoh intoxication, impairment caused by other drugs); or are inherently vague/subjective in themselves (race--esp as defined by PPB).  Values for these vars "should" be identical but they are based on officer perceptions and officer perceptions may legitimately differ.
+
+"civil_drug"              
+"civil_etoh"               
+"civil_mental"            
+"civil_race"        
+
+Because we have a particular interest in understanding interactions between mental status and use of force, selecting reports from officers who perceived a mental crisis seems important.  Because mental crisis is "under-diagnosed" in these data, I instead propose to assign a value of *civil_mental* = 1 to every use of force incident in which *at least one* officer perceived a state of mental crisis.  To do this, I will keep "civil_mental" out of the starter incident-level dataset and instead create an *incid_mental" variable per the previous sentence.
+
+In the same spirit, I will do the same with drug, etoh, and race.  In the case of race, I will create several composite vars to allow an analyst to give different "races" primacy:  black, Hispanic, white, Asian, if ANY officer reported these as a civilian's race.  
+
+
+**I.B.1.  Create New Variables to Allow Summation of Data across Officers within incidents**
+
+
+
+For starters, let's look at the *force2* and *force2* variables.  Important to look also at *force2* because it will have zero or NA values:
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1)  %>%
+  summarize(n())
+```
+```{r}
+ppbforce_clean %>%
+  group_by(force2)  %>%
+  summarize(n())
+
+```
+We see 22 possible categories of force.  We also see that when no force was reported after the initial force, *force1*, a value = NA is returned.  
+
+
+**I.B.1.a.  Create Simplified Categorization of Force**
+
+The following summary describes how I collapsed kinds of force into fewer categories, and also sorted them by level of force.  A new level of force categorization number is appended to each category of force, based on the assignments used by Rosenbaum and Associates in their Q2 2018 compliance report. (See below for more detail.)  To avoid confusion (hopefully), less injurious force is given a suffix = 1, corresponding to PPB force level IV.  More injurious force is given a suffix = 2, corresponding to PPB force levels III and II, and to Rosenbaum's composite category, III + II.  Commonly used terms are substituted for police jargon with the understanding that, for example, more brands of "conducting electrical wires (CEWs)" might be used than just the Taser brand that most people think of (*taser2*), and that more kinds of aerosols than tear gas are included in the *teargas2* category.  Firearm discharge against aggressive animals is put in *other2*.  Mercy killing of animals in distress is shifted to *NA*, because this is not relevant to analysis of force against humans.  Various small categories at my level 2 are combined in *other2*.  
+
+Note that *pointgun* is considered by PPB and/or Rosenbaum (see below) to be a level 1 (lowest level) use of force.  Presumably this is because a gun was not discharged so no physical injury occurred as a result of the action.  However, pointing a firearm carries an explicit threat of immediate death and, from the standpoint of someone in mental crisis, or anyone for that matter, having a gun pointed at them would be quite disturbing and might lead to irrational actions that would trigger additional police violence. Plus, I imagine that a lot of shouting by officers and signs of fear and arousal on the officer(s) part add to the level or sense of threat. Therefore, I am going to make *pointgun* a level 2 use of force in my new *force_small_f* setup.
+
+The "level" of force is not just a matter of the physical harm that immediately results.  Threat is also a component, as is the knock-on effect of high-threat actions by police.  Of course, the early use of high-threat force can also, arguably, reduce future violence by both civilians and police.  I wonder whether early high-threat force might be effective on rational, economically motivated criminals but counter-productive on civilians whose thinking is deranged by mental illness and/or psychoactive substances.  Given that roughly half of all use-of-force incidents involve the latter population, this is an important question.
+
+Note that the PPB use-of-force data detail both the THREATS, perceived and real, posed by civilians, and the acts of RESISTANCE that civilians made.  However, for officers, PPB data only show the policing equivalent of RESISTANCE.  There is no assessment of the threat implied or posed by officers which, as with the threats posed by civilians to officers, could be perceived or real.  Certainly, the appearance on the scene of any well-armed, sworn officer implies a continuum of threat ranging from official observation through social humiliation, ostracism, job-loss, constraint, imprisonment, pain, injury, disablement, and death. From a substance-addicted, house-less person's perspective, humiliation, ostracism, and job-loss are present realities so cannot be threats, and imprisonment might be desirable because it provides food, warmth, and--at present in Oregon--the only realistic path to residential mental health and addiction-counseling services.  Whether they act on it or not, officers probably feel less constrained by the potential adverse consequences of using force on houseless, mentally ill, or addicted persons.
+
+Here is my simplified re-categorization of uses-of-force, together with the number of occurrences between 2018 and 2021 of each of PPB/Rosenbaum's categories:
+
+Aerosol rest.	84			              teargas2
+Baton - pry	1			                  takedown1
+Baton - strike	2		               	strikekick2
+Box-in VIS	380			                vehic1
+CEW	184			                        taser2
+CHWI	7			                        lethal2
+Control Against Resistance	2654		grab1
+FD - animal agg.	2			            lethal2
+FD - animal suf.	18			          NA
+Hobble	33	                        cuffresist1
+Impact Muni	3			                  other2
+K9	71			                        dogbite2
+Less Lethal	89			                lethal2
+PFA	615			                        pointgun2        Rosenbaum ranked PFA = IV
+PIT - VIS	74			                  vehic2
+Ram - VIS	4			                    vehic2               
+Resisted HC	2030			              cuffresist1
+Strikes/kicks	58			              strikekick2
+Takedown	151			                  takedown2        Rosenbaum ranked II-III = my cat 2
+Takedown (II and III)	544	          takedown2        PPB graded II-III = my cat 2
+Takedown (IV)	250			              takedown1        PPB graded IV = my cat 1
+NA	1	                              NA
+
+
+
+```{r}
+#create new force1 variable to hold collapsed categories of force
+ppbforce_clean$force1_small_f <- (ppbforce_clean$force1)
+
+#ppbforce_clean %>%
+#  group_by(force1, force1_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "CEW", "taser2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force1_small_f <- replace(ppbforce_clean$force1_small_f, ppbforce_clean$force1_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force1, force1_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1_small_f) %>%
+  summarise(n())
+```
+The new collapsing of categories gets the original 22 down to 12, plus a small NA category, and incorporates level of force into the strings.  Now, this must be repeated for each of the force sequence variables, *force2* thru *force8*.
+
+
+Before collapsing the other force variables, here is more information about force categorization from Rosenbaum when they were wrestling with this in 2018: From: ASSESSMENT REPORT of the COMPLIANCE OFFICER AND COMMUNITY LIAISON,  Quarterly report: Section III Use of Force, 
+ROSENBAUM & ASSOCIATES, LLP. October 2017 to July 2018:
+
+*"PPB began collecting data on Force categories on August 19, 2017 (during Q3).  Data on categories was not collected for the whole of 2017 Q3 (thus explaining Category IV’s lower value in that quarter). The following 11 types of force are considered category II or III: *
+
+Control Hold with Injury (CHWI), 
+Baton – Strike, 
+Takedown, 
+Strikes/Kicks, 
+Impact Munition, 
+Less Lethal, 
+Aerosol Restraint,
+Conducted Energy Weapon (CEW), 
+K9 Bite, 
+Pursuit Intervention Technique (PIT), 
+Firearm Discharge (FD) – Aggressive Animal, 
+Vehicle Ramming. 
+
+The following 8 types of force are considered category IV:
+Baton – Nonstrike, 
+Controlled Takedown, 
+Resisted Handcuffing, 
+Pointing of a Firearm (PFA), 
+Hobble Restraint, 
+Firearm Discharge (FD) – Wounded Animal, 
+Box-in, 
+Control Against Resistance. "*
+
+Now to collapes the remaining 7 force variables:
+
+```{r}
+#create new force2 variable to hold collapsed categories of force
+ppbforce_clean$force2_small_f <- (ppbforce_clean$force2)
+
+#ppbforce_clean %>%
+#  group_by(force2, force2_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "CEW", "taser2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force2_small_f <- replace(ppbforce_clean$force2_small_f, ppbforce_clean$force2_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force2, force2_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force3 variable to hold collapsed categories of force
+ppbforce_clean$force3_small_f <- (ppbforce_clean$force3)
+
+#ppbforce_clean %>%
+#  group_by(force3, force3_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "CEW", "taser2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force3_small_f <- replace(ppbforce_clean$force3_small_f, ppbforce_clean$force3_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force3, force3_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force4 variable to hold collapsed categories of force
+ppbforce_clean$force4_small_f <- (ppbforce_clean$force4)
+
+#ppbforce_clean %>%
+#  group_by(force4, force4_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "CEW", "taser2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force4_small_f <- replace(ppbforce_clean$force4_small_f, ppbforce_clean$force4_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force4, force4_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force5 variable to hold collapsed categories of force
+ppbforce_clean$force5_small_f <- (ppbforce_clean$force5)
+
+#ppbforce_clean %>%
+#  group_by(force5, force5_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "CEW", "taser2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force5_small_f <- replace(ppbforce_clean$force5_small_f, ppbforce_clean$force5_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force5, force5_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force5 variable to hold collapsed categories of force
+ppbforce_clean$force6_small_f <- (ppbforce_clean$force6)
+
+#ppbforce_clean %>%
+#  group_by(force6, force6_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "CEW", "taser2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force6_small_f <- replace(ppbforce_clean$force6_small_f, ppbforce_clean$force6_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force6, force6_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force1 variable to hold collapsed categories of force
+ppbforce_clean$force7_small_f <- (ppbforce_clean$force7)
+
+#ppbforce_clean %>%
+#  group_by(force7, force7_small_f) %>%
+#  summarise(n())
+```
+
+This is the code that collapses and ranks the original 22 kinds of force:
+
+```{r}
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "CEW", "taser2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force7_small_f <- replace(ppbforce_clean$force7_small_f, ppbforce_clean$force7_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force7, force7_small_f) %>%
+  summarise(n())
+
+```
+
+```{r}
+#create new force8 variable to hold collapsed categories of force
+ppbforce_clean$force8_small_f <- (ppbforce_clean$force8)
+
+#ppbforce_clean %>%
+#  group_by(force8, force8_small_f) %>%
+#  summarise(n())
+```
+
+```{r}
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Impact Muni", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Less Lethal", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "PFA", "pointgun2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "PIT - VIS", "vehic2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Ram - VIS", "vehic2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Resisted HC", "cuffresist1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Strikes/kicks", "strikekick2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown", "takedown2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown (II and III)", "takedown2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Takedown (IV)", "takedown1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Aerosol rest.", "teargas2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Baton - pry", "takedown1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Baton - strike", "strikekick2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Box-in VIS", "vehic1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "K9", "dogbite2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "CEW", "taser2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "CHWI", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Control Against Resistance", "grab1")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "FD - animal agg.", "lethal2")
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "FD - animal suf.", NA)
+
+ppbforce_clean$force8_small_f <- replace(ppbforce_clean$force8_small_f, ppbforce_clean$force8_small_f == "Hobble", "cuffresist1")
+
+
+ppbforce_clean %>%
+  group_by(force8, force8_small_f) %>%
+  summarise(n())
+```
+
+
+
+MAKE THE NEW VARS INTO FACTORS undone
+
+
+**1.B.1.b.  Create New Force Variables for Summing across incidents**
+
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(force1_small_f) %>%
+  summarise(n())
+```
+
+The following code creates 96 new variables, each of which indicates the occurrence (or not) of one kind of force (n = 12) during one time-slot (n = 8).
+
+```{r}
+ppbforce_clean$force1_cuffresist1	<- if_else(ppbforce_clean$force1_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force1_dogbite2	<- if_else(ppbforce_clean$force1_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force1_grab1	<- if_else(ppbforce_clean$force1_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force1_lethal2	<- if_else(ppbforce_clean$force1_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force1_pointgun2	<- if_else(ppbforce_clean$force1_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force1_strikekick2	<- if_else(ppbforce_clean$force1_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force1_takedown1		<- if_else(ppbforce_clean$force1_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force1_takedown2	<- if_else(ppbforce_clean$force1_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force1_taser2	<- if_else(ppbforce_clean$force1_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force1_teargas2	<- if_else(ppbforce_clean$force1_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force1_vehic1	<- if_else(ppbforce_clean$force1_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force1_vehic2	<- if_else(ppbforce_clean$force1_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force2_cuffresist1	<- if_else(ppbforce_clean$force2_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force2_dogbite2	<- if_else(ppbforce_clean$force2_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force2_grab1	<- if_else(ppbforce_clean$force2_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force2_lethal2	<- if_else(ppbforce_clean$force2_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force2_pointgun2	<- if_else(ppbforce_clean$force2_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force2_strikekick2	<- if_else(ppbforce_clean$force2_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force2_takedown1		<- if_else(ppbforce_clean$force2_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force2_takedown2	<- if_else(ppbforce_clean$force2_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force2_taser2	<- if_else(ppbforce_clean$force2_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force2_teargas2	<- if_else(ppbforce_clean$force2_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force2_vehic1	<- if_else(ppbforce_clean$force2_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force2_vehic2	<- if_else(ppbforce_clean$force2_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force3_cuffresist1	<- if_else(ppbforce_clean$force3_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force3_dogbite2	<- if_else(ppbforce_clean$force3_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force3_grab1	<- if_else(ppbforce_clean$force3_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force3_lethal2	<- if_else(ppbforce_clean$force3_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force3_pointgun2	<- if_else(ppbforce_clean$force3_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force3_strikekick2	<- if_else(ppbforce_clean$force3_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force3_takedown1		<- if_else(ppbforce_clean$force3_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force3_takedown2	<- if_else(ppbforce_clean$force3_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force3_taser2	<- if_else(ppbforce_clean$force3_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force3_teargas2	<- if_else(ppbforce_clean$force3_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force3_vehic1	<- if_else(ppbforce_clean$force3_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force3_vehic2	<- if_else(ppbforce_clean$force3_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force4_cuffresist1	<- if_else(ppbforce_clean$force4_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force4_dogbite2	<- if_else(ppbforce_clean$force4_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force4_grab1	<- if_else(ppbforce_clean$force4_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force4_lethal2	<- if_else(ppbforce_clean$force4_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force4_pointgun2	<- if_else(ppbforce_clean$force4_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force4_strikekick2	<- if_else(ppbforce_clean$force4_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force4_takedown1		<- if_else(ppbforce_clean$force4_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force4_takedown2	<- if_else(ppbforce_clean$force4_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force4_taser2	<- if_else(ppbforce_clean$force4_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force4_teargas2	<- if_else(ppbforce_clean$force4_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force4_vehic1	<- if_else(ppbforce_clean$force4_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force4_vehic2	<- if_else(ppbforce_clean$force4_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force5_cuffresist1	<- if_else(ppbforce_clean$force5_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force5_dogbite2	<- if_else(ppbforce_clean$force5_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force5_grab1	<- if_else(ppbforce_clean$force5_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force5_lethal2	<- if_else(ppbforce_clean$force5_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force5_pointgun2	<- if_else(ppbforce_clean$force5_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force5_strikekick2	<- if_else(ppbforce_clean$force5_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force5_takedown1		<- if_else(ppbforce_clean$force5_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force5_takedown2	<- if_else(ppbforce_clean$force5_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force5_taser2	<- if_else(ppbforce_clean$force5_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force5_teargas2	<- if_else(ppbforce_clean$force5_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force5_vehic1	<- if_else(ppbforce_clean$force5_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force5_vehic2	<- if_else(ppbforce_clean$force5_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force6_cuffresist1	<- if_else(ppbforce_clean$force6_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force6_dogbite2	<- if_else(ppbforce_clean$force6_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force6_grab1	<- if_else(ppbforce_clean$force6_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force6_lethal2	<- if_else(ppbforce_clean$force6_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force6_pointgun2	<- if_else(ppbforce_clean$force6_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force6_strikekick2	<- if_else(ppbforce_clean$force6_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force6_takedown1		<- if_else(ppbforce_clean$force6_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force6_takedown2	<- if_else(ppbforce_clean$force6_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force6_taser2	<- if_else(ppbforce_clean$force6_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force6_teargas2	<- if_else(ppbforce_clean$force6_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force6_vehic1	<- if_else(ppbforce_clean$force6_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force6_vehic2	<- if_else(ppbforce_clean$force6_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force7_cuffresist1	<- if_else(ppbforce_clean$force7_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force7_dogbite2	<- if_else(ppbforce_clean$force7_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force7_grab1	<- if_else(ppbforce_clean$force7_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force7_lethal2	<- if_else(ppbforce_clean$force7_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force7_pointgun2	<- if_else(ppbforce_clean$force7_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force7_strikekick2	<- if_else(ppbforce_clean$force7_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force7_takedown1		<- if_else(ppbforce_clean$force7_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force7_takedown2	<- if_else(ppbforce_clean$force7_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force7_taser2	<- if_else(ppbforce_clean$force7_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force7_teargas2	<- if_else(ppbforce_clean$force7_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force7_vehic1	<- if_else(ppbforce_clean$force7_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force7_vehic2	<- if_else(ppbforce_clean$force7_small_f == "vehic2", 1, 0, missing = 0)
+
+ppbforce_clean$force8_cuffresist1	<- if_else(ppbforce_clean$force8_small_f == "cuffresist1", 1, 0, missing = 0)
+ppbforce_clean$force8_dogbite2	<- if_else(ppbforce_clean$force8_small_f == "dogbite2", 1, 0, missing = 0)
+ppbforce_clean$force8_grab1	<- if_else(ppbforce_clean$force8_small_f == "grab1", 1, 0, missing = 0)
+ppbforce_clean$force8_lethal2	<- if_else(ppbforce_clean$force8_small_f == "lethal2", 1, 0, missing = 0)
+ppbforce_clean$force8_pointgun2	<- if_else(ppbforce_clean$force8_small_f == "pointgun2", 1, 0, missing = 0)
+ppbforce_clean$force8_strikekick2	<- if_else(ppbforce_clean$force8_small_f == "strikekick2", 1, 0, missing = 0)
+ppbforce_clean$force8_takedown1		<- if_else(ppbforce_clean$force8_small_f == "takedown1	", 1, 0, missing = 0)
+ppbforce_clean$force8_takedown2	<- if_else(ppbforce_clean$force8_small_f == "takedown2", 1, 0, missing = 0)
+ppbforce_clean$force8_taser2	<- if_else(ppbforce_clean$force8_small_f == "taser2", 1, 0, missing = 0)
+ppbforce_clean$force8_teargas2	<- if_else(ppbforce_clean$force8_small_f == "teargas2", 1, 0, missing = 0)
+ppbforce_clean$force8_vehic1	<- if_else(ppbforce_clean$force8_small_f == "vehic1", 1, 0, missing = 0)
+ppbforce_clean$force8_vehic2	<- if_else(ppbforce_clean$force8_small_f == "vehic2", 1, 0, missing = 0)
+
+#Let's just confirm these all worked by testing a random example
+ppbforce_clean %>%
+  group_by(force6_taser2) %>%
+  summarise (n())
+			
+			
+```
+
+OK.  Now we have 96 new force variables that take value = 1 if a particular kind of force occurred in sequence-slot 1 through 8, and zero otherwise.  Whoopee!
+
+Now let's create, for each force sequence-slot, a variable that contains the degree of force applied.
+
+```{r}
+ppbforce_clean$force1_degree	<- if_else(ppbforce_clean$force1_small_f == "dogbite2" | ppbforce_clean$force1_small_f == "lethal2" | ppbforce_clean$force1_small_f == "pointgun2" | ppbforce_clean$force1_small_f == "stikekick2" | ppbforce_clean$force1_small_f == "takedown2" |  ppbforce_clean$force1_small_f == "taser2" | ppbforce_clean$force1_small_f == "teargas2" | ppbforce_clean$force1_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force2_degree	<- if_else(ppbforce_clean$force2_small_f == "dogbite2" | ppbforce_clean$force2_small_f == "lethal2" | ppbforce_clean$force2_small_f == "pointgun2" | ppbforce_clean$force2_small_f == "stikekick2" | ppbforce_clean$force2_small_f == "takedown2" |  ppbforce_clean$force2_small_f == "taser2" | ppbforce_clean$force2_small_f == "teargas2" | ppbforce_clean$force2_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force3_degree	<- if_else(ppbforce_clean$force3_small_f == "dogbite2" | ppbforce_clean$force3_small_f == "lethal2" | ppbforce_clean$force3_small_f == "pointgun2" | ppbforce_clean$force3_small_f == "stikekick2" | ppbforce_clean$force3_small_f == "takedown2" |  ppbforce_clean$force3_small_f == "taser2" | ppbforce_clean$force3_small_f == "teargas2" | ppbforce_clean$force3_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force4_degree	<- if_else(ppbforce_clean$force4_small_f == "dogbite2" | ppbforce_clean$force4_small_f == "lethal2" | ppbforce_clean$force4_small_f == "pointgun2" | ppbforce_clean$force4_small_f == "stikekick2" | ppbforce_clean$force4_small_f == "takedown2" |  ppbforce_clean$force4_small_f == "taser2" | ppbforce_clean$force4_small_f == "teargas2" | ppbforce_clean$force4_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force5_degree	<- if_else(ppbforce_clean$force5_small_f == "dogbite2" | ppbforce_clean$force5_small_f == "lethal2" | ppbforce_clean$force5_small_f == "pointgun2" | ppbforce_clean$force5_small_f == "stikekick2" | ppbforce_clean$force5_small_f == "takedown2" |  ppbforce_clean$force5_small_f == "taser2" | ppbforce_clean$force5_small_f == "teargas2" | ppbforce_clean$force5_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force6_degree	<- if_else(ppbforce_clean$force6_small_f == "dogbite2" | ppbforce_clean$force6_small_f == "lethal2" | ppbforce_clean$force6_small_f == "pointgun2" | ppbforce_clean$force6_small_f == "stikekick2" | ppbforce_clean$force6_small_f == "takedown2" |  ppbforce_clean$force6_small_f == "taser2" | ppbforce_clean$force6_small_f == "teargas2" | ppbforce_clean$force6_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force7_degree	<- if_else(ppbforce_clean$force7_small_f == "dogbite2" | ppbforce_clean$force7_small_f == "lethal2" | ppbforce_clean$force7_small_f == "pointgun2" | ppbforce_clean$force7_small_f == "stikekick2" | ppbforce_clean$force7_small_f == "takedown2" |  ppbforce_clean$force7_small_f == "taser2" | ppbforce_clean$force7_small_f == "teargas2" | ppbforce_clean$force7_small_f == "vehic2", 2, 1, missing = 0)
+
+ppbforce_clean$force8_degree	<- if_else(ppbforce_clean$force8_small_f == "dogbite2" | ppbforce_clean$force8_small_f == "lethal2" | ppbforce_clean$force8_small_f == "pointgun2" | ppbforce_clean$force8_small_f == "stikekick2" | ppbforce_clean$force8_small_f == "takedown2" |  ppbforce_clean$force8_small_f == "taser2" | ppbforce_clean$force8_small_f == "teargas2" | ppbforce_clean$force8_small_f == "vehic2", 2, 1, missing = 0)
+
+
+ppbforce_clean %>%
+  group_by(force1_degree) %>%
+  summarise (n())
+
+ppbforce_clean %>%
+  group_by(force2_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force3_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force4_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force5_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force6_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force7_degree) %>%
+  summarise (n())
+ppbforce_clean %>%
+  group_by(force8_degree) %>%
+  summarise (n())
+```
+Excellent, that worked.  
+
+We already have the variable, *force_officer_sum*, that counts the total number of times force was applied during each officer-civilian interaction.
+
+Now let's sum up the total value of the degrees of force that were applied during the interaction:
+
+
+```{r}
+ppbforce_clean$force_degree_sum <- (ppbforce_clean$force1_degree + ppbforce_clean$force2_degree + ppbforce_clean$force3_degree + ppbforce_clean$force4_degree + ppbforce_clean$force5_degree + ppbforce_clean$force6_degree + ppbforce_clean$force7_degree + ppbforce_clean$force8_degree)
+
+ppbforce_clean %>%
+  group_by(force_degree_sum) %>%
+  summarise (n())
+
+```
+This worked.  4 interactions reached the theoretical maximum: level 2 force X 8 applications
+
+Now, finally, let's create a variable that calculates the highest level of force used during an interaction.
+
+```{r}
+ppbforce_clean$force_degree_max	<- if_else(ppbforce_clean$force1_degree == 2 | ppbforce_clean$force2_degree == 2 | ppbforce_clean$force3_degree == 2 | ppbforce_clean$force4_degree == 2 | ppbforce_clean$force5_degree == 2 |  ppbforce_clean$force6_degree == 2 | ppbforce_clean$force7_degree == 2 | ppbforce_clean$force8_degree == 2, 2, 1, missing = 0)
+
+ppbforce_clean %>%
+  group_by(force_degree_max) %>%
+  summarise(n())
+
+```
+That worked and no missing values, as expected.
+
+**1.B.1.b.  Create New Resistance Variables for Summing across Incidents**
+
+Resistance variables describe a civilians (perceived) uncooperative response to each officer's presence, orders, and actions.  Up to 8 instances of resistance can be reported by each officer, and each instance can take one of 6 values: Active, Aggressive, Deadly, Passive, None, and NA.  
+
+We need to create 6 x 8 = 48 new variables to count the number of times each level of resistance occurred during an incident.  From these, we can create 6 more variables to indicate *any* reporting of each type of resistance during an incident.  That's a total of 54 new resistance variables.
+
+As a reminder, here are the levels in the resistance variables:
+
+```{r}
+ppbforce_clean %>%
+  group_by(resist1) %>%
+  summarise(n())
+
+```
+
+I will assign both NA and None to zero, and rank passive, active, aggressive, and deadly from 1 to 4, respectively.  First step is create variables for each degree or resistance within each time slot.  However, unlike with force, because each kind of resistance has its own unique degree of resistance, rather than assigning 1 to each occurrence I will assign a number corresponding to the degree, i.e, 1,  2, 3, 4 or 5, with NA = 0.  Giving *none* a value = 1 allows us to preserve the distinction between *none* and *NA*.  Later, when summing up the degrees of force, we can subtract 1 to bring *none* bake to zero.  
+
+
+```{r}
+
+ppbforce_clean$resist1_active3	<- if_else(ppbforce_clean$resist1 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist1_aggress4	<- if_else(ppbforce_clean$resist1 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist1_deadly5	<- if_else(ppbforce_clean$resist1 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist1_passive2	<- if_else(ppbforce_clean$resist1 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist1_none1	<- if_else(ppbforce_clean$resist1 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist2_active3	<- if_else(ppbforce_clean$resist2 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist2_aggress4	<- if_else(ppbforce_clean$resist2 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist2_deadly5	<- if_else(ppbforce_clean$resist2 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist2_passive2	<- if_else(ppbforce_clean$resist2 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist2_none1	<- if_else(ppbforce_clean$resist2 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist3_active3	<- if_else(ppbforce_clean$resist3 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist3_aggress4	<- if_else(ppbforce_clean$resist3 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist3_deadly5	<- if_else(ppbforce_clean$resist3 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist3_passive2	<- if_else(ppbforce_clean$resist3 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist3_none1	<- if_else(ppbforce_clean$resist3 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist4_active3	<- if_else(ppbforce_clean$resist4 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist4_aggress4	<- if_else(ppbforce_clean$resist4 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist4_deadly5	<- if_else(ppbforce_clean$resist4 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist4_passive2	<- if_else(ppbforce_clean$resist4 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist4_none1	<- if_else(ppbforce_clean$resist4 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist5_active3	<- if_else(ppbforce_clean$resist5 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist5_aggress4	<- if_else(ppbforce_clean$resist5 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist5_deadly5	<- if_else(ppbforce_clean$resist5 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist5_passive2	<- if_else(ppbforce_clean$resist5 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist5_none1	<- if_else(ppbforce_clean$resist5 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist6_active3	<- if_else(ppbforce_clean$resist6 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist6_aggress4	<- if_else(ppbforce_clean$resist6 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist6_deadly5	<- if_else(ppbforce_clean$resist6 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist6_passive2	<- if_else(ppbforce_clean$resist6 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist6_none1	<- if_else(ppbforce_clean$resist6 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist7_active3	<- if_else(ppbforce_clean$resist7 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist7_aggress4	<- if_else(ppbforce_clean$resist7 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist7_deadly5	<- if_else(ppbforce_clean$resist7 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist7_passive2	<- if_else(ppbforce_clean$resist7 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist7_none1	<- if_else(ppbforce_clean$resist7 == "None", 1, 0, missing = 0)
+
+ppbforce_clean$resist8_active3	<- if_else(ppbforce_clean$resist8 == "Active", 3, 0, missing = 0)
+ppbforce_clean$resist8_aggress4	<- if_else(ppbforce_clean$resist8 == "Aggressive", 4, 0, missing = 0)
+ppbforce_clean$resist8_deadly5	<- if_else(ppbforce_clean$resist8 == "Deadly", 5, 0, missing = 0)
+ppbforce_clean$resist8_passive2	<- if_else(ppbforce_clean$resist8 == "Passive", 2, 0, missing = 0)
+ppbforce_clean$resist8_none1	<- if_else(ppbforce_clean$resist8 == "None", 1, 0, missing = 0)
+
+```
+
+```{r}
+ppbforce_clean %>%
+  group_by(resist4_aggress4) %>%
+  summarise(n())
+
+```
+
+This appears to have worked.  (The same basic code worked for the force variables so it is presumably OK.)  
+
+Now let's create a variable that calculates the degree of resistance during each time slot:
+
+
+```{r}
+ppbforce_clean$resist1_degree <- if_else (!is.na(ppbforce_clean$resist1), (ppbforce_clean$resist1_active3 + ppbforce_clean$resist1_aggress4 + ppbforce_clean$resist1_deadly5 + ppbforce_clean$resist1_passive2 + ppbforce_clean$resist1_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist1_degree) %>%
+  summarise(n())
+
+```
+That worked.  Now, repeat the calculation of degrees of resistance by timeslot, for each timeslot:
+
+```{r}
+ppbforce_clean$resist2_degree <- if_else (!is.na(ppbforce_clean$resist2), (ppbforce_clean$resist2_active3 + ppbforce_clean$resist2_aggress4 + ppbforce_clean$resist2_deadly5 + ppbforce_clean$resist2_passive2 + ppbforce_clean$resist2_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist2_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist3_degree <- if_else (!is.na(ppbforce_clean$resist3), (ppbforce_clean$resist3_active3 + ppbforce_clean$resist3_aggress4 + ppbforce_clean$resist3_deadly5 + ppbforce_clean$resist3_passive2 + ppbforce_clean$resist3_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist3_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist4_degree <- if_else (!is.na(ppbforce_clean$resist4), (ppbforce_clean$resist4_active3 + ppbforce_clean$resist4_aggress4 + ppbforce_clean$resist4_deadly5 + ppbforce_clean$resist4_passive2 + ppbforce_clean$resist4_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist4_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist5_degree <- if_else (!is.na(ppbforce_clean$resist5), (ppbforce_clean$resist5_active3 + ppbforce_clean$resist5_aggress4 + ppbforce_clean$resist5_deadly5 + ppbforce_clean$resist5_passive2 + ppbforce_clean$resist5_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist5_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist6_degree <- if_else (!is.na(ppbforce_clean$resist6), (ppbforce_clean$resist6_active3 + ppbforce_clean$resist6_aggress4 + ppbforce_clean$resist6_deadly5 + ppbforce_clean$resist6_passive2 + ppbforce_clean$resist6_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist6_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist7_degree <- if_else (!is.na(ppbforce_clean$resist7), (ppbforce_clean$resist7_active3 + ppbforce_clean$resist7_aggress4 + ppbforce_clean$resist7_deadly5 + ppbforce_clean$resist7_passive2 + ppbforce_clean$resist7_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist7_degree) %>%
+  summarise(n())
+
+ppbforce_clean$resist8_degree <- if_else (!is.na(ppbforce_clean$resist8), (ppbforce_clean$resist8_active3 + ppbforce_clean$resist8_aggress4 + ppbforce_clean$resist8_deadly5 + ppbforce_clean$resist8_passive2 + ppbforce_clean$resist8_none1 - 1),0)
+ppbforce_clean %>%
+  group_by(resist8_degree) %>%
+  summarise(n())
+
+```
+
+Success!  Now let's sum the degrees of resistance across all timeslots:
+
+```{r}
+ppbforce_clean$resist_degree_sum <- with(ppbforce_clean, resist1_degree + resist2_degree + resist3_degree + resist4_degree + resist5_degree + resist6_degree + resist7_degree + resist8_degree)
+
+ppbforce_clean %>%
+  group_by(resist_degree_sum) %>%
+  summarise(n())
+
+```
+That worked.  Highest total of degrees is 24.
+
+Finally, let's create variables that indicate whether ANY resistance was recorded within a timeslot:
+
+```{r}
+ppbforce_clean$resist1_any <- if_else(ppbforce_clean$resist1 >1, 1, 0, missing = 0)
+  #remember that no resistance = 1 in the resist1 through resist 8 variables
+ppbforce_clean$resist2_any <- if_else(ppbforce_clean$resist2 >1, 1, 0, missing = 0)
+ppbforce_clean$resist3_any <- if_else(ppbforce_clean$resist3 >1, 1, 0, missing = 0)
+ppbforce_clean$resist4_any <- if_else(ppbforce_clean$resist4 >1, 1, 0, missing = 0)
+ppbforce_clean$resist5_any <- if_else(ppbforce_clean$resist5 >1, 1, 0, missing = 0)
+ppbforce_clean$resist6_any <- if_else(ppbforce_clean$resist6 >1, 1, 0, missing = 0)
+ppbforce_clean$resist7_any <- if_else(ppbforce_clean$resist7 >1, 1, 0, missing = 0)
+ppbforce_clean$resist8_any <- if_else(ppbforce_clean$resist8 >1, 1, 0, missing = 0)
+
+ppbforce_clean %>%
+  group_by(resist1_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist2_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist3_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist4_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist5_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist6_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist7_any) %>%
+  summarise(n())
+ppbforce_clean %>%
+  group_by(resist8_any) %>%
+  summarise(n())
+```
+
+And, finally, finally, let's create a variable that counts the number of timeslots during which resistance occurred, for each officer-civilian interaction:
+
+```{r}
+ppbforce_clean$resist_any_sum <- (ppbforce_clean$resist1_any + ppbforce_clean$resist2_any + ppbforce_clean$resist3_any + ppbforce_clean$resist4_any + ppbforce_clean$resist5_any + ppbforce_clean$resist6_any + ppbforce_clean$resist7_any + ppbforce_clean$resist7_any)
+
+ppbforce_clean %>%
+  group_by(resist_any_sum) %>%
+  summarise(n())
+```
+Success.  But the 8 zeroes are really NAs.  So let's change them to NA:
+
+```{r}
+
+ppbforce_clean$resist_any_sum <- ppbforce_clean$resist_any_sum %>% na_if(0)
+
+ppbforce_clean %>%
+  group_by(resist_any_sum) %>%
+  summarise(n())
+
+```
+
+**1.B.1.c.  Create New Race Variables for Summing within incidents**
+
+The variable, *civil_race*, has several mutually exclusive categories.  We could just use the value that would be retained among the trans-incident variables in the starter incident-level dataset, but there might be disagreements among officers about race so, in order to study that, let's also create race-value specific variables that can sum across FDCRs.  Later, in analysis, we can divide these sums by the number of officers to detect incidents in which reports disagree.
+
+
+```{r}
+ppbforce_clean %>%
+  group_by(civil_race) %>%
+  summarise(n())
+```
+
+```{r}
+ppbforce_clean$race_asian	<- if_else(ppbforce_clean$civil_race == "Asian", 1, 0, missing = 0)
+ppbforce_clean$race_black	<- if_else(ppbforce_clean$civil_race == "Black", 1, 0, missing = 0)
+ppbforce_clean$race_hisp	<- if_else(ppbforce_clean$civil_race == "Hispanic", 1, 0, missing = 0)
+ppbforce_clean$race_native	<- if_else(ppbforce_clean$civil_race == "Native American", 1, 0, missing = 0)
+ppbforce_clean$race_white	<- if_else(ppbforce_clean$civil_race == "White", 1, 0, missing = 0)
+
+ppbforce_clean %>%
+  group_by(race_asian) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_black) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_hisp) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_native) %>%
+  summarise(n())
+
+ppbforce_clean %>%
+  group_by(race_white) %>%
+  summarise(n())
+
+```
+
+
+**1.B.1.d.  Create New Mental Health, ETOH, and Drug Variables for Summing within Incidents**
+
+In the case of *civil_mental*, FDCRs might differ and, because mental distress is difficult to recognize and under-recognized by officers, we want to count cases as "mental" if ANY officer perceives mental distress.  When merging data, hopefully I can find an "any" argument that can be used similarly to "sum" to combine observations.  The same rationale applies to *civil_etoh* and *civil_drug*.
+
+
+```{r}
+ppbforce_clean$incid_mental_any <- ppbforce_clean$civil_mental
+
+ppbforce_clean$incid_etoh_any <- ppbforce_clean$civil_etoh
+
+ppbforce_clean$incid_drug_any <- ppbforce_clean$civil_drug
+
+```
+
+**1.B.1.e.  Create New Transience Variable for Summing within Incidents**
+
+Transience is report as Yes if an officer cannot ascertain a permanent address for a civilian.  Possibly, one reporting officer might get an address when another did not.  What we need to add is a variable that we can use to make transience = No if ANY officer is able to find a permanent address.
+
+Note that *civil_transient* is not a 0/1 var, it is Yes/No/NA.  Unlike mental, drug, and etoh, which are 0/1.  The *incid_housed* var created below IS 0/1.
+
+
+
+```{r}
+ppbforce_clean$incid_housed <- if_else(ppbforce_clean$civil_transient == "No", 1, 0, missing = 1)  
+                                          
+ppbforce_clean %>%
+  group_by (incid_housed) %>%
+  summarise(n())
+                                           
+                                          
+```
+
+
+**1.B.1.f.  Create New Tenure Variables for Summing within Incidents**
+
+Officers participating in a use-of-force incident have varying tenure and by picking one officer's at random we get no information about the tenure of the other involved officers.  We and avoid losing tenure info about the other officers by calculation the mean of *officer_tenure* when we merge data. We can also obtain the longest tenure for an incident, and the shortest.  Let's create new placeholder variables that will allow us to do that. (The actual calculations will occur in Step 3, the group-and-merge process.)
+
+```{r}
+ppbforce_clean$incid_tenure_mean <- ppbforce_clean$officer_tenure
+ppbforce_clean$incid_tenure_max <- ppbforce_clean$officer_tenure
+ppbforce_clean$incid_tenure_min <- ppbforce_clean$officer_tenure
+
+#ppbforce_clean %>%
+#  group_by (incid_tenure_mean) %>%
+#  summarise(n())
+
+#tail(ppbforce_clean$incid_tenure_mean) #note: there are 7 missing values in these vars
+```
+This worked but there is no point in showing the (large) tables because the var is numeric. There are 7 missing values.
+
+
+**1.B.1.f.  Create New Variable for Summing Number of Officers per Incident**
+
+All that's needed here is to create a new variable and set its value = 1 for all observations.  We can sum it by incident when we merge the datasets.
+
+```{r}
+ppbforce_clean$incid_officer_sum <- ppbforce_clean$incid_housed
+ppbforce_clean$incid_officer_sum <- if_else(ppbforce_clean$incid_housed == 0, 1, 1)
+
+ppbforce_clean %>%
+  group_by(incid_officer_sum)  %>%
+  summarise(n())
+
+```
+That worked.  Each officer report counts as 1 officer, no NAs, and no values other than 1.
+
+
+**I.C.  Pre-Sorting the Source Dataset.**
+
+When the R function, *distinct()*, is applied to a dataframe, only the FIRST record (row) in a duplicated group is retained.  Another preliminary step in preparing the report-level source dataset for conversion to an episode-based dataset is to sort the *ppbforce_clean* dataset so that the first row in any episode's group of reports is likely to have the most accurate values for episode-wide descriptors.  As a reminder, the episode-wide descriptors in *ppbforce_clean* are:   
+
+"civil_age"                  
+"civil_age_f"                    
+"civil_id"                   
+"civil_instance"            
+"civil_sex"                 
+"incid_day"                  
+"incid_disp"                          
+"incid_force_lev"            
+"incid_id"                   
+"incid_month"               
+"incid_sixhour"              
+"incid_year"                 
+"recordcount_1"             
+"recordcount_2"  
+"call_detail"        
+"call_group"                
+"call_source"  
+
+
+In a previous look at the data, I did find numerous cases in which values for variables that should be the same in each report of an incident were not identical.  There is little basis to expect one officer's report to be more accurate than another's on such basic matters as age, sex, and time of day.  A simple way to sort would be by officer id number, which is said by PPB to have been randomly assigned in these data.  However, it might be better to select the officer who reported the most inflictions of force, because data describing one officer's encounter will be merged into the final incident dataset in Step 3, and it might as well be the officer who used the most force.  Also, through September 2021, 2 pairs of rows in the data have the same officer ID within a single encounter.  These are cases in which an officer used force more than 8 times, so he or she filed a second use of force report to describe all the uses.  (These cases are indicated by *recordcount1* and *recordcount2* = 2.)  Sorting by *force_officer_sum* will ensure that the most important of these two rows stays on top.  
+
+To provide a tiebreaker when multiple officers report the same number of force inflictions, I will use *officer_id* as the third sorting variable.
+
+The following code sorts the source dataset:
+
+```{r}
+
+# note: incid_id is ascending order, officer_id and force_officer_sum and descending, ie, larger first
+ppbforce_clean <- ppbforce_clean[order(ppbforce_clean$incid_id, -ppbforce_clean$force_officer_sum,-ppbforce_clean$officer_id), ]
+
+showsort <- ppbforce_clean[,c("incid_id",  "force_officer_sum", "officer_id")]
+showsort
+remove(showsort)
+
+```
+Appears to have worked.  incid_id = 12555768 is one of the incidents for which 2 reports were filed. It is properly sorted by force_officer_sum.
+
+
+**II. Step 2. CREATE FOUNDATION FOR AN INCIDENT-LEVEL DATASET** 
+
+
+    
+
+**II. A.  CREATE SUBSET OF DATA THAT RETAINS ONLY TRANS-INCIDENT VARIABLES**
+
+
+Next I create a dataset that contains the incident-level variables from the original officer-level dataset.  These are the variables whose values should be identical in all reports of a given incident.
+
+In addition, I have elected to include certain variables that describe single officers, the actions of single officers, or the actions of the civilian (resistance) as perceived a single officer. These data cannot describe the totality of the overall encounter but, because we will be selecting the incident-level variables as they were reported by the officer who imposed the most force during the incident (see below), including key officer-level variables will preserve important information within the incident dataset, i.e., the actions of the most-involved officer.  The officer-level variables to be included are: *"officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8".*
+
+For reference, here is a list of all the variables from which the starter incident dataset will be selected:
+
+```{r}
+ls(ppbforce_clean
+  )
+```
+
+```{r}
+incident <- ppbforce_clean[,c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev", "incid_id", "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8")]    
+
+head(incident, n = 10)
+```
+
+
+**II. B.  ELIMINATE ALL BUT ONE REPORT PER INCIDENT**
+
+The *distinct()* function in R eliminates rows (observations) that have duplicate values on a specified variable.  See https://dplyr.tidyverse.org/reference/distinct.html   Other variables can be protected from the duplication elimination by the argument *.keep_all = TRUE*  This will allow us to eliminate all but one FDRC report for each use-of-force incident without unintentionally failing to eliminate rows that have minor differences due to errors or disagreements between officers making reports. 
+
+```{r}
+
+incident_unique <- distinct(incident, incid_id, .keep_all = TRUE)
+
+head(incident_unique, n = 50)
+
+```
+3335 observations, down from 7255.  This appears to have worked! To check, let's count the number of unique incid_id's and see if it is the same = 3335.
+
+```{r}
+count(incident, incid_id)
+```
+This confirms that the *distinct()* function worked as intended. 3335 rows = 3335 rows.
+
+To be clear, we have now created a dataset with one observation per incident.  The trans-incident data that it contains were retained from the first observation in each group of observations describing the same incident.  The decision about which observation is first was made by sorting the dataset within incid_id's by officer_id, a supposedly randomly generated ID number.  Because we have no basis for deciding which officer's report is correct when there is a difference among officer's reports, picking one is as good as picking another.  (Reports generally agree on all trans-incident variables, but sometimes data are missing in one report or recorded differently.)
+
+
+---------------------------
+The following are notes from conversation with Ray Brunner about an alternative way to retain only the first duplicated row in the event that minor differences between the rows made unique() think they were not duplicates.  I elected instead to use the distinct() function but I want to retain this code for the record.
+
+#but first make sure newtable is unique (no rows that are dups but look like they are not because some value differs)
+# but this removes the last dup, does not keep both
+# this table is for investigation only, and it only removes the first of a duplicate pair or triple or...
+#PLUS all the unduplicaterd rows
+newtable_uncorrected_dups_only <- newtable[duplicated(newtable$incid_id),]  #square brackets subset the dataset, 
+  #r before c, sep by comma 
+
+#take first row for keepers
+newtable_first_dup_only <- newtable[!duplicated(newtable$incid_id),] 
+#this is a table of unique incident id with the data pulled from the first row containing that incid_id
+
+ppbforce_clean_by_incid_id  <- newtable_first_dup_only
+---------------------------
+
+
+
+
+
+
+**III. STEP 3.  Merge with remaining ppbforce_clean variables by summing variable values into one row.**
+
+**III. A. Remove the Variables Were Shifted to *incident_unique* **
+
+First, we need to remove from *ppbforce_clean* the variables that we previously put into the *incident_unique* dataset, except for *incid_id*, which will be our matching variable.
+
+```{r}
+
+ppbforce_fdcr_to_merge <- select(ppbforce_clean, - c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev",  "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "force1_small_f", "force2_small_f", "force3_small_f", "force4_small_f", "force5_small_f", "force6_small_f", "force7_small_f", "force8_small_f","resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8"))
+
+```
+
+```{r}
+ls(ppbforce_fdcr_to_merge)
+
+```
+
+Success!  Funny how the big actions take one simple line of code and the piddly stuff can get complicated.  (The little negative sign in front of the c() is why this code removes rather than extracts the listed variables.)
+
+
+**III.B. Aggregate the FDCR Data up to the Incident Level**
+
+How we aggregate depends on the variable.  We can aggregate by 
+
+(a) adding up values, i.e., when we want to get the sum of actions, particularly force and resist actions, or the number of officers involved in an incident; by
+
+(b) averaging values, which works for the measured variable, officer tenure; and by
+
+(c) selecting the max or min value.  
+
+Min and, especially, max, works well for 1/0 variables to create variables that record *any* occurrence of an event or characteristic.  Of course, it also works if we want to know, say, the longest-tenured officer involved in an incident, or the shortest-tenured.  
+
+The code below shows which variables I aggregated by which method.  The *group_by(incid_id)* says that the aggregation occurs only incident by incident.  We should end up with a data that has exactly as many rows as the *incident_unique* dataset, which is 3335 for the PPB use-of-force data ending in 3rd Quarter, 2021.
+
+```{r}
+
+ppbforce_fdcr_to_merge <-  ppbforce_fdcr_to_merge %>%
+  group_by(incid_id) %>%
+  summarize(
+    
+    #across(matches(c("call_detail", "call_group", "call_source", "civil_age", "civil_age_f", "civil_drug", "civil_etoh",  "civil_id",  "civil_instance", "civil_mental", "civil_race", "civil_sex", "civil_transient", "incid_day", "incid_disp", "incid_force_lev", "incid_id", "incid_month", "incid_sixhour", "incid_year", "recordcount_1", "recordcount_2", "officer_id", "officer_precinct", "officer_precinct_collapsed", "officer_tenure", "officer_tenure_f", "force1", "force2", "force3", "force4", "force5", "force6", "force7", "force8", "resist1", "resist2", "resist3", "resist4", "resist5", "resist6", "resist7", "resist8"), first)),
+    
+    across(matches("incid_tenure_mean"), mean, na.rm = T),
+    
+    across(matches("incid_officer_sum"), sum, na.rm = F),
+    
+    across(matches("incid_tenure_min"), min),
+    
+    across(matches("incid_tenure_max"), max),
+                     
+    across(matches("force_degree_max"), max),                 
+    
+    across(matches(c("resist1_any", "resist2_any", "resist3_any", "resist4_any", "resist5_any", "resist6_any", "resist7_any", "resist8_any")), max),
+    
+    across(ends_with("degree"), max),
+    
+    across(starts_with("race"), max),
+    
+    across(matches(c("incid_drug_any", "incid_etoh_any", "incid_mental_any", "incid_housed")), max),
+    
+    across(matches(c("threat_biohaz", "threat_blunt", "threat_gun", "threat_gun_implied", "threat_gun_replica", "threat_other", "threat_unarmed", "threat_unused_weapon")), max),
+    
+    across(ends_with(c("cuffresist1", "dogbite2", "grab1", "lethal2", "pointgun2", "strikekick2", "takedown1", "takedown2", "taser2", "teargas2", "vehic1", "vehic2")), sum, na.rm = F),
+    
+    #the vars in nextline take value 0 to 4 depending on the var (varname minus 1)  
+    across(ends_with(c("active3", "aggress4", "deadly5", "none1", "passive2")), max),
+    
+    across(matches(c("resist_degree_sum", "resist_any_sum")), sum, na.rm = T),
+    
+    across(matches(c("force_degree_sum", "threat_sum")), sum, na.rm = F),
+    
+    #The vars in nextline take values of 0, 1, 2 depending on calculated degree of force used
+    across(matches(c("force1_degree", "force2_degree", "force3_degree", "force4_degree", "force5_degree", "force6_degree", "force7_degree", "force8_degree")), max)
+  )
+
+#head(ppbforce_fdcr_to_merge)
+
+#count(ppbforce_fdr_to_merge)
+
+```
+
+undone  WEIRD THINGS HAPPENED TO FORCE_DEGREE_MAX UNTIL I SEPARATED IT OUT INTO ITS OWN LINE OF CODE, IN THE ABOVE CHUNK.  I NEVER COULD FIGURE OUT THE REASON.  TO BE SAFE, SHOULD CHECK THE OTHER LINES INVOLVING CONCATENATED VECTORS OF VARS, AND THE MAX ARGUMENT.  ARE THEY ALL WORKING AS EXPECTED?
+
+----------
+ray's code:
+output <- ppbforce_clean %>% group_by(incid_id) %>% summarise(officer_num = n())
+
+#ray's code
+#ppbforce_incident <- merge(ppbforce_clean_by_incid_id, output)
+
+ray's code:
+output <- ppbforce_clean_q321 %>% group_by(incid_id) %>% summarise(incid_force_sum = sum(force_officer_sum))
+
+ppbforce_clean_q321_by_incid_id <- merge(ppbforce_clean_q321_by_incid_id, output)
+
+----------
+
+
+**III.C. Combine the *ppbforce_fdcr_to-merge* Dataset with the *incident_unique* Dataset **
+
+Now for the final merge to create an incident-level dataset for the PPB use-of-force data.  
+
+```{r}
+ppbforce_incident_ds <- inner_join(ppbforce_fdcr_to_merge, incident_unique, by = "incid_id", suffix = c(".o", ".i"), keep = TRUE)
+
+head(ppbforce_incident_ds)
+
+count(ppbforce_incident_ds)
+```
+
+Looks good.  N = 3335, what we wanted.
+
+To be sure, let's compare the *incid_id* from each dataset:
+
+```{r}
+mergetest <- ppbforce_incident_ds %>%
+ select("incid_id.o", "incid_id.i") 
+mergetest
+```
+OK.  This proven, I will now remove the duplicate *incid_id* variable and rename the other one back to *incid_id*.
+
+```{r}
+ppbforce_incident_ds <- select(ppbforce_incident_ds, - "incid_id.o")
+
+ppbforce_incident_ds$incid_id <- ppbforce_incident_ds$incid_id.i
+```
+
+```{R}
+
+ppbforce_incident_ds %>% select(incid_id, everything())
+
+#head(ppbforce_incident_ds)
+                               
+```
+
+
+Finally, I will / You should rename the dataset to match the most recent year and quarter of your data.  "dofirst"
+
+```{r}
+ppbforce_incident_ds_321 <- ppbforce_incident_ds
+
+ppbforce_incident_ds_321
+
+```
+
+```{r}
+ls(ppbforce_incident_ds_321)
+```
+
+Finally finally, I will create save the dataset as an R dataframe and also save a permanent CSV version for uploading into other scripts and downloading.
+
+```{r}
+save(ppbforce_incident_ds_321, file = "ppbforce_incident_ds_321.RData")
+
+write.csv(ppbforce_incident_ds_321, file = "ppbforce_incident_ds_321.csv")
+```
+
+>>>>>>> 3f77390a736e7ef83cd9cf100d28d5da80208119

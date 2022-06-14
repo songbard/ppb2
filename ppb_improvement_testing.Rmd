@@ -1,0 +1,879 @@
+---
+title: "Testing Whether Use of Force Has Changed for Mentally Impaired Persons in Portland,
+  Oregon"
+author: "Jonathan Betz Brown, MPP, PhD"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+Material in this repository is subject to copyright and licensed for free duplication and modification under the most recent version of the Replication Commons Public License, posted at www.replicationcommons.org. In return for free access and the right to create downstream work from the licensed work, the Replication Commons Public License requires users to provide sufficient code and data for their downstream work to be replicated, and to require uses of their work to do the same. In other words, the License sustains the norms and practices of high-quality public-domain science. Copying or use of material from this repository's consitutes acceptance of this license.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+library(ggplot2)
+#library(pacman)
+library(stringr)
+library(skimr)
+library(rio)
+library(ggtext)
+
+
+#IMPORTANT: package = MASS (needed for negative binomial regression) interferes with dplyr in tidyverse so the select() command does not work.  Must say dplyr::select().  I put the negbino at the end of the script so as not to interfere.
+```
+
+Now, after all this effort, time to test the primary hypothesis, has the rate of use of force among dispatches likely to have included persons in mental difficulty, decreased?  Here, from Github, where I posted them and perfected them on 29 Mar 2022, before beginning the analysis that I will document below, are the hypotheses to be tested and the methods I will use to test them.
+
+
+**STATEMENT OF PRIMARY HYPOTHESIS AND TESTING METHODS**
+
+In perhaps half the incidents in which Portland Police Bureau (PPB) officers use substantial physical force, or threaten lethal force by pointing their guns or Tasers, their force is applied against a person with significant mental dysfunction. In 20xx, the United States Department of Justice negotiated a settlement agreement with PPB and the City of Portland to reduce unconstitutional use of force against civilians with mental illness. Many promises were made in 20xx and much time and money has since been spent to write policies, measure activities, write reports, train police officers, and try to sustain committees. Has inappropriate use of force against the mentally impaired decreased? That question has remained almost unasked. It certainly has not been unanswered. Now, in 2022, a revised Settlement Agreement is being negotiated because of the failure of PPB and City to live up to parts of the original agreement. Knowledge of whether use of force is improving or worsening would help the negotiators and the Court. If this question cannot be answered, perhaps we can learn from the failure so progress can be measured in the future.
+
+This report asks three questions;
+
+**What can the available data tell us about whether forceful and sometimes fatal police action against mentally ill citizens has improved?**
+
+**What can a strenuous effort to measure improvement teach us about how to get a clearer answer in the future?**
+
+**Can we identify the data, possibly including video data, that would let PPB train and manage officers so that improvement could become routine, self-sustaining without court-ordered oversight?**
+
+Question one, whether there has been improvement in use of force by police against the mentally impaired, is difficult to answer. Quarterly changes in aggregate counts of use of force, which PPB and its contractors regularly report, shed limited light. In part, this is because neither officers nor psychologists can quickly learn the mental status of civilians during stressful, brief encounters. Even if officers could succeed at instant diagnosis, there is a deeper difficulty. We want to measure improvements in the reactions of officers when opportunities to use force arise. Reactions and proactions, if that's a word, are what training, hiring, policy, documentation, and supervision can and should affect. Counts of use of force cannot get at reactions, because the number of use-of-force incidents also depends on changes in the volume of opportunities to use force.
+
+Environmental changes drive the volume of opportunities,. These include changes in the number of officers "on the street"; changes in the city's population size and composition; and changes in policies and/or incentives that affect which crimes are taken seriously, or prosecuted. For persons with mental illness, volume of opportunity also runs with changes in population rates of mental impairment, with rates of houselessness, and with rates of substance abuse, all of which respond in turn to events such as viral epidemics, changing housing prices, price inflation, rates of unemployment, and, of course, to changes in the prevention and treatment mental illness and addiction, such as the closure of the Hooper walk-in crisis center, and the loss of outreach and face-to-face with therapists during COVID.
+
+Fortunately, there is a method in data analysis to control for most of these environmental changes, whether known and measured or unappreciated. This is by combining use-of-force reports with reports of police-dispatch calls passed on by 911. When houselessness increases, calls to 911 go up. As more families experience a child or adult in crisis, 911 receives more calls. Calls to 911 go up as population grows, as burglaries and thefts increase, as domestic violence events erupt more frequently--and calls to 911 decrease when problems subside. Regardless of cause, calls to 911 trigger most police encounters with civilians. We can track the changing rates of use of force per dispatch from 911 to test the hypothesis that rates of use of force have been decreasing. We can further focus down on use of force against the mentally ill by limiting the analysis to the types of calls that account for most encounters with mentally ill civilians.
+
+
+**METHODS**
+
+To guarantee the integrity of the tests of statistical significance in this report, I posted my plan of analysis publicly before starting analytic work. The analysis plan described below was written between March 9 and March 15, 2022. I posted it on Github on Mar 28, 2022, having spent three months developing the dataset that will allow analysis to start.
+
+To prevent the misleading estimates of statistical significance that arise from testing multiple hypotheses, I pre-specified a single primary hypothesis and 2 statistical procedures by which to test it.
+
+Primary Hypothesis: Use of force by PPB against civilians with mental impairment has decreased since 2017.
+
+**Pre-Specified Methods to Test the Primary Hypothesis:**
+
+PT1. The primary hypothesis will be confirmed if a bivariable regression of force-event occurrence vs. time generates a statistically significantly negative beta-coefficient on the time variable. Time will be measured by month and year. The analysis dataset will be a dataset of all 911 dispatches that includes data from use-of-force events that have been matched to dispatches by month, year, and dispatch-type. Data prior to 2018 will be excluded, as will data after 3rd Quarter, 2021, unless updated use-of-force data have been posted by PPB and can be processed before the deadline for submission of documents for Judge Simon's fairness hearing, which is 15 April 2022. In both the numerator and the denominator, the testing data will be limited to a subset of dispatch labels that have been ascertained, per the methods described below, to be associated with a higher likelihood that a mentally ill civilian was involved. This subset of data will be identified before the hypothesis is tested. Time-series-style adjustments for autocorrelation are not planned because the occurrence of force in any month is presumed to be independent of use of force in prior months, and because even if there is some autocorrelation, autocorrelations is irrelevant to the question of whether use of force has been decreasing.
+
+PTest 2. This test will be of the severity of use of force on persons likely to have been mentally impaired, as measured by the statistical significance of a negative beta-coefficient for time in a logistic regression of the use of a level 2 (more coercive, painful, threatening, or dangerous) application force, in the combined dispatch and force-event dataset, as specified in Test 1, above.
+
+**Prespecified Secondary Analyses and Tests**
+
+ST1. The dependent variable will be the cumulative number of distinct applications of force occurring during each use-of-force incident. I will regress cumulative count of applications of force, on time, using a negative-binomial statistical model. The data will be the dataset of force-incidents (dispatch data not used). Other assumptions and settings as in Primary Test 1.
+
+ST2. Logistic regression of instances of Level 2 force on time, in a the use-of-force dataset, only, among civilians whom PPB officers, in their FDCR reports, perceived to have been impaired by mental illness.
+
+ST3. Logistic regression of instances of Level 2 force on time, in a the use-of-force dataset, only, among civilians whom PPB officers, in their FDCR reports, perceived to have been impaired by mental illness or by ingestion of drugs other than alcohol.
+
+**METHODS**
+
+**A. Download the dispatch-incident dataset and Prepare for Analysis**
+
+*A.1. Download Data**
+
+
+```{r}
+dispin <- read.csv("ppbdispatch_incident_321.csv")
+analysis <- as.data.frame(dispin)
+nrow(analysis)
+```
+
+
+
+**A.2.  Eliminate data from before 2018 and after Quarter 4 2021** (unless we can update with new source data to complete the year).
+```{r}
+#unique(analysis$index_datepart)
+
+analysis %>%
+  group_by(index_datepart) %>%
+  summarise(n())
+  
+```
+
+
+
+```{r}
+analysis$incid_index_year <- str_sub(analysis$index_datepart, start = 5, end = 6)
+
+analysis %>%
+  group_by(analysis$incid_index_year) %>%
+  summarise(n())
+```
+
+```{r}
+analysis$disp_index_year <- str_sub(analysis$ReportMonthYear, start = 5, end = 6)
+
+analysis %>%
+  group_by(disp_index_year) %>%
+  summarise (n())
+
+```
+
+```{r}
+analysis$incid_index_month <- str_sub(analysis$index_datepart, start = 1, end = 3)
+
+analysis %>%
+  group_by(incid_index_month) %>%
+  summarise(n())
+
+analysis$disp_index_month <- str_sub(analysis$ReportMonthYear, start = 1, end = 3)
+
+analysis %>%
+  group_by(disp_index_month) %>%
+  summarise (n())
+```
+
+
+```{r}
+nrow(analysis)
+ncol(analysis)
+
+analysis2 <- analysis %>% filter(analysis$disp_index_year != "17" | is.na(analysis$disp_index_year))
+
+nrow(analysis2)
+ncol(analysis2)
+```
+
+```{r}
+
+analysis2 <- analysis2 %>% filter(index_datepart != "Oct-21" | is.na(index_datepart))
+analysis2 <- analysis2 %>% filter(ReportMonthYear != "Oct-21"  | is.na(ReportMonthYear))
+nrow(analysis2)
+ncol(analysis2)
+```
+```{r}
+
+analysis2 <- analysis2 %>% filter(index_datepart != "Nov-21" | is.na(index_datepart))
+analysis2 <- analysis2 %>% filter(ReportMonthYear != "Nov-21" | is.na(ReportMonthYear))
+nrow(analysis2)
+ncol(analysis2)
+
+analysis2 <- analysis2 %>% filter(index_datepart != "Dec-21" | is.na(index_datepart))
+analysis2 <- analysis2 %>% filter(ReportMonthYear != "Dec-21" | is.na(ReportMonthYear))
+nrow(analysis2)
+ncol(analysis2)
+```
+OK, after 2 days of work, this code works. Sheesh. (Trick is to include the is.na argument formulated as above.)
+
+To prepare for analysis of secondary hypotheses, I will now save the analysis2 as it stands at this point as dataset as **ppbdispin_all**.  Later, I will pull out just the rows with force incidents.
+
+```{r}
+ppbdispin_all <- analysis2
+nrow(ppbdispin_all)
+ncol(ppbdispin_all)
+```
+
+
+
+**A.3. Limit cases to ones in which the numerator or the denominator are for call types likely to involve a mentally ill person.**
+
+The decision about which call types are enriched with mentally ill civilians is based on the analysis documented in **ppb_dispatch.Rmd**.  Briefly, this work showed overlap of the call types that precipitated incidents that officers labelled mental crisis and drug impairment, but no overlap with perceived etoh impairment. The call types in which mental crisis label was noticeably more frequent than expected were 
+
+Behavioral Health, 
+Welfare Check, 
+Assist, and 
+Hazard (few cases).  
+
+The call types for which the drug-affected label was more frequent were
+
+Behavioral Health
+Community Policing (few cases)
+Tri Met (few cases)
+Unwanted Person
+Welfare Check
+
+For clarity, I will exclude the call types with very few events and selected the numerator and denominator from these call types:
+
+Behavioral Health
+Assist
+Unwanted Person
+Welfare Check.
+
+/// should this have been done before the merge?  so we want all 4 in denom 1 or 2 or 3 or 4 PLUS all 4 in numerator but what about the NAs?  Guess we can not worry about NAs because as long as the hard values are in there were are OK.  Must be one combined filter command since we are filtering IN, not OUT.  
+
+```{r}
+nrow(analysis2)
+ncol(analysis2)
+
+analysis_mental_rate_calc <- analysis2 %>% filter(call_group == "Behavioral Health" | call_group == "Assist" | call_group == "Unwanted Person" | call_group == "Welfare Check" | FinalCallCategory == "Behavioral Health" | FinalCallCategory == "Assist" | FinalCallCategory == "Unwanted Person" | FinalCallCategory == "Welfare Check"  )
+
+
+nrow(analysis_mental_rate_calc)
+ncol(analysis_mental_rate_calc)
+```
+OK.  28.5% of the dataset meet the inclusion criteria.  When time, look see what proportion of num and denom.  undone
+
+**B. Test Hypothesis 1**
+
+**B.1.  create a numerical TIME variable**
+
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(ReportMonthYear) %>%
+  summarise (n())
+```
+```{r}
+analysis_mental_rate_calc$disp_index_year4 <- as.numeric(analysis_mental_rate_calc$disp_index_year) + 2000
+
+head(analysis_mental_rate_calc$disp_index_year4, n = 5)
+```
+Now create a numeric data in POSIXct format:
+
+```{r}
+analysis_mental_rate_calc$disp_index_month_num <- analysis_mental_rate_calc$disp_index_month
+
+analysis_mental_rate_calc$disp_index_month_num <- recode(analysis_mental_rate_calc$disp_index_month, Jan = "1", Feb = "2", Mar = "3", Apr = "4", May = "5", Jun = "6", Jul = "7", Aug = "8", Sep = "9", Oct = "10", Nov = "11", Dec = "12" )
+
+analysis_mental_rate_calc %>%
+  group_by(disp_index_month_num)%>%
+  summarise(n())
+```
+
+```{r}
+#needs a numeric value for month
+analysis_mental_rate_calc$disp_index_isodate <- as.Date(ISOdate(year = analysis_mental_rate_calc$disp_index_year4, month = analysis_mental_rate_calc$disp_index_month_num, day = 1))
+
+head(analysis_mental_rate_calc$disp_index_isodate, n = 5)
+
+
+# truncate the unused time data by converting with as.Date
+
+```
+OK, got valid dates, except possibly for some NAs.
+
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(disp_index_isodate) %>%
+  summarise(n())
+```
+107 NAs.  Those are the remaining unmatched force events.  Decision time: leave them in the analysis dataset or remove them?  Let's see what they look like...
+
+```{r}
+unmatched107 <- filter(analysis_mental_rate_calc, is.na(analysis_mental_rate_calc$disp_index_isodate))
+unmatched107 
+```
+These are ALL from 2017, what are they doing in this dataset?
+
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(incid_year) %>%
+  summarise(n())
+```
+
+The 107 are the only 2017 incidents wrongly in the analysis dataset.  So easy decision--exclude them all.  
+
+This summary also gives us our numerator size after restricting to mental-illness-likely call types: 214 + 225 + 177 + 168 = 784
+
+```{r}
+
+
+nrow(analysis_mental_rate_calc)
+ncol(analysis_mental_rate_calc)
+
+analysis_mental_rate_calc <- filter(analysis_mental_rate_calc, !is.na(analysis_mental_rate_calc$disp_index_year))
+
+nrow(analysis_mental_rate_calc)
+ncol(analysis_mental_rate_calc)
+```
+OK, that seems to have done the job.  The numerical time variable will be *disp_index_isodate*.
+
+
+
+**B.2.  Create a 0/1 variable that indicates that a use-of-force incident occurred.**
+
+```{r}
+head(analysis_mental_rate_calc, n = 5)
+```
+
+```{r}
+ls(analysis_mental_rate_calc)
+```
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(force_degree_max) %>%
+  summarise(n())
+```
+OK, all 784 force incidents are identified by *force_degree_max*.  Now may create force_any variable from this.
+
+```{r}
+analysis_mental_rate_calc$dispin_force_any <- analysis_mental_rate_calc$force_degree_max
+
+analysis_mental_rate_calc$dispin_force_any <- recode(analysis_mental_rate_calc$force_degree_max, "1"= "1", "2" = "1", .missing = "0")
+
+analysis_mental_rate_calc %>%
+  group_by(dispin_force_any) %>%
+  summarise(n())
+
+
+```
+OK, now make numeric to prepare for logistic regression
+
+```{r}
+analysis_mental_rate_calc$dispin_force_any <- as.numeric(analysis_mental_rate_calc$dispin_force_any)
+```
+
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(dispin_force_any) %>%
+  summarise(n())
+```
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(disp_index_isodate) %>%
+  summarise(n())
+```
+
+
+
+**B.3.  Extract dataset for Ho1 analysis**
+
+```{r}
+analysis_mental_rate_calc <- as.data.frame(analysis_mental_rate_calc)
+
+analysis_h1_logistic <- analysis_mental_rate_calc %>% dplyr::select(dispin_force_any, disp_index_isodate)
+
+ls(analysis_h1_logistic)
+
+```
+
+```{r}
+ls(analysis_h1_logistic)
+```
+
+
+```{r}
+analysis_h1_logistic %>%
+  group_by(dispin_force_any) %>%
+  summarise(n())
+```
+
+**B.4.  Visually inspect scatterplot of force vs time for possible nonlinearity.**
+
+Too many datapoints to generate a scatterplot.  Will do a time series grouped by date.
+
+
+```{r, fig.width = 10, fig.height = 7, echo= FALSE)}
+h1a <- analysis_h1_logistic %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(force_incidents = mean(dispin_force_any)) %>% 
+  ggplot(aes(disp_index_isodate, force_incidents)) + 
+  labs(title = "Table 1. Force Incidents per 911 Dispatch by Month", subtitle = "Portland Police Bureau, among Dispatch Types with High Mental-Illness Impairment", caption = "Based on the number of policing incidents involving significant force that occurred as a result of dispatches, divided by all 911 dispatches.  Numerator and denominator limited to dispatches that are more associated with officers' perceptions of impairment due to mental health crisis or ingestion of drugs other than alcohol.  See text for the specific call types included.  P-value = 0.661") +
+  xlab("Month") +
+  ylab("Force Events per Dispatch") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.0, face = "italic")# move caption to the left
+    #fig.width = 10, fig.height= 7, echo= FALSE
+  ) +
+    geom_line()
+#fig.width= 10, fig.height= 7, echo= FALSE
+h1a
+```
+
+
+
+```{r}
+analysis_h1_logistic %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(dispin_force_any = n())
+```
+
+
+**B.5.  Estimate logistic regression of force on time.**
+
+```{r}
+am.data = glm(formula = dispin_force_any ~ disp_index_isodate, data = analysis_h1_logistic, family = binomial)
+
+print(summary(am.data))
+```
+
+
+
+**B.6. Estimate whether degree of force has lessened**
+
+I have created a force level variable that takes two values, 1 or 2.  Easiest way to test for a negative beta is to transform this variable to 0/1 and do a logistic regression of force level on time, similar to test of H1.
+
+First step, create 0/1 variable for force level an extract a dataset containing force and time.  
+
+```{r}
+analysis_mental_rate_calc %>%
+  group_by(force_degree_max) %>%
+  summarise(n())
+```
+
+
+```{r}
+analysis_mental_rate_calc$dispin_force_degree_max_01 <- (analysis_mental_rate_calc$force_degree_max)
+
+analysis_mental_rate_calc$dispin_force_degree_max_01 <- recode(analysis_mental_rate_calc$force_degree_max, "2" = "1", "1" = "0", .missing = "0")
+
+analysis_mental_rate_calc %>%
+  group_by(dispin_force_degree_max_01) %>%
+  summarise(n())
+
+
+```
+OK, now make numeric to prepare for logistic regression
+
+```{r}
+analysis_mental_rate_calc$dispin_force_degree_max_01 <- as.numeric(analysis_mental_rate_calc$dispin_force_degree_max_01)
+```
+
+Now extract the variables needed for the regresion...
+
+```{r}
+analysis_h1b_logistic <- analysis_mental_rate_calc %>%
+  dplyr::select(dispin_force_any, dispin_force_degree_max_01, disp_index_isodate)
+
+ls(analysis_h1b_logistic)
+
+```
+Now perform the regression:
+
+```{r}
+am.data = glm(formula = dispin_force_degree_max_01 ~ disp_index_isodate, data = analysis_h1b_logistic, family = binomial)
+
+print(summary(am.data))
+```
+Try to make a time series plot of force level...
+
+```{r}
+h1b <- analysis_h1b_logistic %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(high_force_incidents = mean(dispin_force_degree_max_01)) %>% 
+  ggplot(aes(disp_index_isodate, high_force_incidents)) + 
+  labs(title = "Table 2. High-Severity Force Incidents per 911 Dispatch by Month", subtitle = "Portland Police Bureau, among Dispatch Types with High Mental Impairment", caption = "Based on the highest-level of force reported by officers to have been used during use-of-force incidents that occurred as a result of dispatches, divided by all 911 dispatches.  Both numerator and denominator limited to dispatches that are more associated with officer perception of impairment due to mental health crisis or ingestion of drugs other than alcohol.  Highest force level = 1, lowest force level = 0.   P-value for trend = 0.118") +
+  xlab("Month") +
+  ylab("Severe-Force Events per Dispatch") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+h1b
+```
+
+**B.7. Secondary Hypothesis 1 (ST1)**
+
+The secondary hypotheses each use the force-incident dataset, only.  First step is to read in this dataset.  To preserve useful mutations made above, I will start be reading in the entire dispin dataset that I previously preserved, then filter in only the use of force rows.  Then I will repeat the date manipulations so I have machine readable lubridates.
+
+Do we need to exclude 2017 incidents as we did for the dispin analyses? We do for ST2 and ST3 because force level computation changed after 2017. Limiting to post-2017 also gets rid of the training data and makes the entire analysis consistent across all hypotheses and tests.  So I will delete the 2017 data.
+
+The input dataset is therefore **ppbdispin_all**.  This dataset already excludes cases before 2018 and cases after 3rd quarter 2021.  Next step is to filter out the cases in which there was no use of force incident.
+
+
+```{r}
+ppbincident_2018 <- ppbdispin_all %>% filter(force_degree_max != 0)
+
+nrow(ppbincident_2018)
+ncol(ppbincident_2018)
+                           
+```
+Good.  Now we need the dates so they can be computed as times.  I will repeat what I did above on the entire dispin dataset (which occurred after I filtered out the non-mental-health call types, so it has to be done again for an incident dataset that is to contain all call types.)  I will replace **analysis_mental_rate_calc** with **ppbincident_2018**.
+
+**B.1.  create a numerical TIME variable**
+
+```{r}
+ppbincident_2018 %>%
+  group_by(ReportMonthYear) %>%
+  summarise (n())
+```
+```{r}
+ppbincident_2018$disp_index_year4 <- as.numeric(ppbincident_2018$disp_index_year) + 2000
+
+head(ppbincident_2018$disp_index_year4, n = 5)
+```
+Now create a numeric data in POSIXct format:
+
+```{r}
+ppbincident_2018$disp_index_month_num <- ppbincident_2018$disp_index_month
+
+ppbincident_2018$disp_index_month_num <- recode(ppbincident_2018$disp_index_month, Jan = "1", Feb = "2", Mar = "3", Apr = "4", May = "5", Jun = "6", Jul = "7", Aug = "8", Sep = "9", Oct = "10", Nov = "11", Dec = "12" )
+
+ppbincident_2018 %>%
+  group_by(disp_index_month_num)%>%
+  summarise(n())
+```
+
+```{r}
+#needs a numeric value for month
+ppbincident_2018$disp_index_isodate <- as.Date(ISOdate(year = ppbincident_2018$disp_index_year4, month = ppbincident_2018$disp_index_month_num, day = 1))
+
+head(ppbincident_2018$disp_index_isodate, n = 5)
+
+```
+OK, got valid dates, except possibly for some NAs.
+
+```{r}
+ppbincident_2018 %>%
+  group_by(disp_index_isodate) %>%
+  summarise(n())
+```
+340 NAs.   Let's see what they look like...
+
+```{r}
+unmatched107 <- filter(ppbincident_2018, is.na(ppbincident_2018$disp_index_isodate))
+unmatched107 
+```
+These are almost from 2017, what are they doing in this dataset?  (Same thing happened in the dispin dataset.)
+
+```{r}
+ppbincident_2018 %>%
+  group_by(incid_year) %>%
+  summarise(n())
+```
+
+Exclude them:
+
+```{r}
+
+
+nrow(ppbincident_2018)
+ncol(ppbincident_2018)
+
+ppbincident_2018 <- filter(ppbincident_2018, !is.na(ppbincident_2018$disp_index_year))
+
+nrow(ppbincident_2018)
+ncol(ppbincident_2018)
+```
+OK, that did the job again.  Removed the 340.  As before, the numerical time variable will be *disp_index_isodate*.  Now on to testing the hypotheses:
+
+"ST1. The dependent variable will be the cumulative number of distinct applications of force occurring during each use-of-force incident. I will regress cumulative count of applications of force, on time, using a negative-binomial statistical model. The data will be the dataset of force-incidents (dispatch data not used). Other assumptions and settings as in Primary Test 1."
+
+
+```{r}
+ls(ppbincident_2018)
+```
+
+The variable to use to measure applications of force is *force_degree_sum* because it is the only aggregate force variable that was summed across officers when they incident variable was created.  It adds up the number of applications of force times the degree of each application of force (1 or 2).  It is a measure of "total force applied" on the civilian during an incident.
+
+There are a few mistaken force level = 0 observations in these data.  These should be removed first to allow the negative binomial regression to work properly.
+
+```{r}
+nrow(ppbincident_2018)
+ncol(ppbincident_2018)
+
+analysis_h2a_negbino <-  ppbincident_2018 %>% filter(force_degree_sum != 0)  
+
+nrow(analysis_h2a_negbino)
+ncol(analysis_h2a_negbino)
+
+                      
+```
+I AM MOVING THE ACTUAL NEGBINO REGRESSION TO THE END OF THIS NOTEBOOK BECAUSE IT REQUIRES THE MASS PACKAGE WHICH SCREWS EVERYTHING UP
+
+
+```{r}
+h2a <- analysis_h2a_negbino %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(total_force_applications_x_degree_of_force = mean(force_degree_sum)) %>% 
+  ggplot(aes(disp_index_isodate, total_force_applications_x_degree_of_force)) + 
+  labs(title = "Figure 3. Mean Severity-Weighted Applications Force per Force-Incident by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the number of distinct applications of force reported by officers at each use-of-force incident, times the severity of each application (1 = low, 2 = high). P-value for trend (negative binomial regression) < 0.05") +
+  xlab("Month") +
+  ylab("Mean Level of Force") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+h2a
+
+```
+
+```{r}
+analysis_h2a_negbino %>%  
+  group_by(force_degree_sum) %>%
+  summarise(n()) 
+```
+
+```{r}
+analysis_h2a_negbino %>%  
+  group_by(force_degree_sum) %>%
+  summarise(occurrences = n()) %>%
+  ggplot(aes(x=occurrences, y=force_degree_sum)) + 
+  geom_bar(stat = "identity")
+```
+**B.7B.  Uncorrected Unadjusted Change in Counts of Use of Force**
+
+Just for reference, let's see what the raw counts of use of force have done over the time window.
+
+```{r}
+
+ppbincident_2018 %>%
+  group_by(force3) %>%
+  summarise(n())
+```
+
+
+
+
+#ppbincident_2018$force1 <- as.numeric(ppbincident_2018$force1)
+
+p <- ppbincident_2018 %>%  
+  dplyr::group_by(disp_index_isodate) %>% 
+  dplyr::summarise(count_per_month = n(force1)) %>% 
+  ggplot(aes(disp_index_isodate, count_per_month)) + 
+  labs(title = "Force Incidents per Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Source: PPB use of force dataset, cases where no use of force reported are excluded.") +
+  xlab("Month") +
+  ylab("Force Incidents") +
+  theme(
+    #plot.title = element_text(hjust = 0.5, size = 14),    # Center title position and size
+    #plot.subtitle = element_text(hjust = 0.5),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 10, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+p
+
+
+
+**B.8. Secondary Hypothesis 2 (ST2)**
+
+ST2. Logistic regression of instances of Level 2 force on time, in a the use-of-force dataset, only, among civilians whom PPB officers, in their FDCR reports, perceived to have been impaired by mental illness.
+
+
+```{r}
+ppbincident_2018$dispin_force_degree_max_01 <- (ppbincident_2018$force_degree_max)
+
+ppbincident_2018$dispin_force_degree_max_01 <- recode(ppbincident_2018$force_degree_max, "2" = "1", "1" = "0", .missing = "0")
+
+ppbincident_2018$dispin_force_degree_max_01 <- as.numeric(ppbincident_2018$dispin_force_degree_max_01)
+
+ppbincident_2018 %>%
+  group_by(dispin_force_degree_max_01) %>%
+  summarise(n())
+
+
+```
+**THIS FIRST ANALYSIS IS FOR ALL FORCE INCIDENTS, NOT JUST MENTAL HEALTH ONES**
+
+
+```{r}
+am.data = glm(formula = dispin_force_degree_max_01 ~ disp_index_isodate, data = ppbincident_2018, family = binomial)
+
+print(summary(am.data))
+```
+
+```{r}
+
+h2b <- ppbincident_2018 %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(freq_force_level_2 = mean(dispin_force_degree_max_01)) %>% 
+  ggplot(aes(disp_index_isodate, freq_force_level_2)) + 
+  labs(title = "Figure 4. Average Severity of Force per Force-Incident by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the highest severity of force reported by officers to have been used during each use-of-force incident.  Severe force = 1, Less Severe Force = 0. P-value for trend = 0.001") +
+  xlab("Month") +
+  ylab("Mean Level of Force") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+h2b
+
+```
+Now I will restrict to mental health cases only...
+
+```{r}
+ppbincident_2018_mental_drug_only <- ppbincident_2018 %>% filter(incid_mental_any == "1" | incid_drug_any == "1")
+
+nrow(ppbincident_2018_mental_drug_only)
+ncol(ppbincident_2018_mental_drug_only)
+
+```
+
+
+```{r}
+am.data = glm(formula = dispin_force_degree_max_01 ~ disp_index_isodate, data = ppbincident_2018_mental_drug_only, family = binomial)
+
+print(summary(am.data))
+```
+
+```{r}
+h2c <- ppbincident_2018_mental_drug_only %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(freq_force_level_2 = mean(dispin_force_degree_max_01)) %>% 
+  ggplot(aes(disp_index_isodate, freq_force_level_2)) + 
+  labs(title = "Figure X. Average Degree of Force per Mental/Drug-Impaired Incident by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the highest-level of force reported by officers to have been used during use-of-force incidents at which at least one officer perceived that the civilian was impaired by mental illness and/or a drug other than alcohol.  Highest force level = 2, lowest force level = 1.  See text for the specific actions assigned to each force level.  P-value for trend < 0.001") +
+  xlab("Month") +
+  ylab("Mean Level of Force") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+h2c
+```
+
+```{r}
+resist_deg_sum_graph <- ppbincident_2018_mental_drug_only %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(resistance_level = mean(resist_degree_sum)) %>% 
+  ggplot(aes(disp_index_isodate, resistance_level)) + 
+  labs(title = "Average Degree of Reistance per Mental/Drug-Impaired Incident by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the highest-level of subject resistance reported by officers to have been used during use-of-force incidents at which at least one officer perceived that the civilian was impaired by mental illness and/or a drug other than alcohol.") +
+  xlab("Month") +
+  ylab("Mean Degree of Resistance") +
+  theme(
+    #plot.title = element_text(hjust = 0.5, size = 14),    # Center title position and size
+    #plot.subtitle = element_text(hjust = 0.5),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 10, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+resist_deg_sum_graph
+```
+
+```{r}
+ppbincident_2018_mental_drug_only %>%
+  group_by(resist_degree_sum) %>%
+  summarise(n())
+```
+Need a neg binomial model to test whether *resist_degree_sum* is increasing over time.  See end of notebook...  [neg bino regression found positive slope, p <0.05.  But the number of resistances automatically links to the number of force applications so it would make more sense to create or use a measure of presence of a weapon or a gun and test that, as an independent test of risk to officers.]
+
+```{r}
+resist_threat_sum_graph <- ppbincident_2018_mental_drug_only %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(threat_total = mean(threat_sum)) %>% 
+  ggplot(aes(disp_index_isodate, threat_total)) + 
+  labs(title = "Average Threat per Mental/Drug-Impaired Incident by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the threats from weapons reported by officers to have been used during use-of-force incidents at which at least one officer perceived that the civilian was impaired by mental illness and/or a drug other than alcohol.") +
+  xlab("Month") +
+  ylab("Mean Total Threat from Weapons") +
+  theme(
+    #plot.title = element_text(hjust = 0.5, size = 14),    # Center title position and size
+    #plot.subtitle = element_text(hjust = 0.5),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 10, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+resist_threat_sum_graph
+```
+
+```{r}
+ppbincident_2018_mental_drug_only %>%
+  group_by(threat_sum) %>%
+  summarise(n())
+```
+
+Might be better to create a threat-any variable and estimate a logistic model.  
+
+```{r}
+ppbincident_2018_mental_drug_only$threat_sum <- as.numeric(ppbincident_2018_mental_drug_only$threat_sum)
+  
+ppbincident_2018_mental_drug_only$threat_any	<- if_else(ppbincident_2018_mental_drug_only$threat_sum > 0, 1, 0, missing = 0)
+
+ppbincident_2018_mental_drug_only %>%
+  group_by(threat_any) %>%
+  summarise(n())
+```
+
+```{r}
+resist_threat_any_graph <- ppbincident_2018_mental_drug_only %>%  
+  group_by(disp_index_isodate) %>% 
+  summarise(any_threat = mean(threat_any)) %>% 
+  ggplot(aes(disp_index_isodate, any_threat)) + 
+  labs(title = "Table x. Proportion of Mental/Drug-Impaired Force-Incidents With Threat to Officers, by Month", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the threats from various weapons reported by officers to have been used during use-of-force incidents at which at least one officer perceived that the civilian was impaired by mental illness and/or a drug other than alcohol.") +
+  xlab("Month") +
+  ylab("Mean Total Threat from Weapons") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12),    # Center title position and size
+    plot.subtitle = element_text(hjust = 0.5, size = 10),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 8, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+resist_threat_any_graph
+```
+```{r}
+am.data = glm(formula = threat_any ~ disp_index_isodate, data = ppbincident_2018_mental_drug_only, family = binomial)
+
+print(summary(am.data))
+```
+OK, significant increase over time in *threat_any*.  Let's try a multivariable logistic that includes *threat_any*.
+
+```{r}
+am.data = glm(formula = dispin_force_degree_max_01 ~ disp_index_isodate + threat_any, data = ppbincident_2018_mental_drug_only, family = binomial)
+
+print(summary(am.data))
+```
+
+Interesting.  So the coefficient on time is basically unchanged when *threat_any* is added to the model, even though *threat_any* is increasing with time and even though threat_any is hugely predictive of max force in general.  Beta on time drops from 0.00054 to 0.00050. I believe this means that the increase in max force is not much explained by increased threat, even though threat is increasing during this time period.
+
+Lets compare mental/drug to not mental/drug...
+
+```{r}
+ppbincident_2018_not_mental_drug <- ppbincident_2018 %>% filter(incid_mental_any != "1" & incid_drug_any != "1")
+
+nrow(ppbincident_2018_not_mental_drug)
+ncol(ppbincident_2018_not_mental_drug)
+
+```
+
+
+```{r}
+am.data = glm(formula = dispin_force_degree_max_01 ~ disp_index_isodate, data = ppbincident_2018_not_mental_drug, family = binomial)
+
+print(summary(am.data))
+```
+So, bottom line, degree of force used has gone up steadily since 2017 on mental/drug civilians but not on other civilians, including etoh-affected. Let's try to make a graph that illustrates this...
+
+
+
+ppbincident_2018_mental_drug_only <- ppbincident_2018_mental_drug_only %>% mutate(set == "1")    # label as character to make it discrete for ggplot
+ppbincident_2018_not_mental_drug <- ppbincident_2018_not_mental_drug %>% mutate(set == "2")
+dat  <- bind_rows(ppbincident_2018_mental_drug_only, ppbincident_2018_not_mental_drug)         # combine all measurements
+
+deg_force_compare <- dat %>%  
+  group_by(set, disp_index_isodate) %>% 
+  summarise(freq_force_level_2 = mean(dispin_force_degree_max_01)) %>% 
+  ggplot(aes(disp_index_isodate, freq_force_level_2, color = set)) + 
+  labs(title = "Average Degree of Force per Incident, Mental/Drug Impaired vs. Other", subtitle = "Portland Police Bureau Q1:2018 - Q3:2020", caption = "Based on the highest-level of force reported by officers to have been used during use-of-force incidents at which at least one officer perceived that the civilian was impaired by mental illness and/or a drug other than alcohol; vs incidents at which no such perception was noted.  Highest force level = 2, lowest force level = 1.  See text for the specific actions assigned to each force level.") +
+  xlab("Month") +
+  ylab("Mean Level of Force") +
+  theme(
+    #plot.title = element_text(hjust = 0.5, size = 14),    # Center title position and size
+    #plot.subtitle = element_text(hjust = 0.5),            # Center subtitle
+    plot.caption = element_textbox_simple(hjust = 0, size = 10, vjust = 1.5, face = "italic")# move caption to the left
+  ) +
+    geom_line()
+
+deg_force_compare
+
+
+
+
+
+**B.9. Secondary Hypothesis 3 (ST3)**
+
+ST3. Logistic regression of instances of Level 2 force on time, in a the use-of-force dataset, only, among civilians whom PPB officers, in their FDCR reports, perceived to have been impaired by mental illness or by ingestion of drugs other than alcohol.
+
+
+``{r}
+
+install.packages(MASS)
+install.packages(foreign)
+
+library(MASS)
+library(foreign)
+
+summary(m1 <- glm.nb(force_degree_sum ~ disp_index_isodate, data = analysis_h2a_negbino))
+```
+
+``{r}
+
+summary(m1 <- glm.nb(resist_degree_sum ~ disp_index_isodate, data = analysis_h2a_negbino))
+
+remove.packages(MASS)
+remove.packages(foreign)
+
+#print(summary(m1))
+```
+
+
+“Those who forget good and evil and seek only to know the facts are more likely to achieve good than those who view the world through the distorting medium of their own desires.” - Bertrand Russell
+
+
+https://www.scribbr.com/statistics/linear-regression-in-r/

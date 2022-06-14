@@ -1,0 +1,872 @@
+---
+title: "Preparation of PPB Dispatch Dataset for Comparison to PPB Use of Force Datasets"
+author: "Jonathan Brown"
+output: html_notebook
+---
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+```{r}
+#library(pacman)
+library(tidyverse)
+library(lubridate)
+library(gmodels)
+library(ggplot2)
+library(pacman)
+library(stringr)
+library(skimr)
+library(rio)
+```
+
+```{r}
+#p_load(here, gtsummary, rstatix, janitor, scales, flextable )
+```
+
+
+
+```{r}
+ppbdispatch <- read_csv("DispatchedCalls_OpenData_2021.csv")
+
+ppbdispatch <- as.data.frame(ppbdispatch)
+
+head(ppbdispatch, 10)
+  
+
+```
+
+```{r}
+skim(ppbdispatch)
+```
+```{r}
+summary(ppbdispatch)  #less output than skim() and more difficult to read.
+```
+
+
+
+```{r}
+ppbincident <- read_csv("ppbforce_incident_ds_321.csv")
+
+ppbincident <- as.data.frame(ppbincident)
+
+ppbincident
+
+```
+```{r}
+ls(ppbincident)
+```
+```{r}
+skim(ppbincident)
+```
+
+
+For starters, let's review how calls are coded in the dispatch dataset.  
+
+```{r}
+ppbdispatch %>%
+  group_by(Priority) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbdispatch %>%
+  group_by(FinalCallGroup) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbdispatch %>%
+  group_by(FinalCallCategory) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+
+We find 50 call categories and 8 call groups.  Priority is counted separately, low, medium, and high, fairly evenly distributed. More detail:
+
+```{r}
+skim(ppbdispatch)
+```
+
+
+To compare categories of dispatches against categories of call in the force-incident dataset, I will first pull out only the dispatched incidents of use of force, as these are the only incidents for which rates can be validly calculated against the dispatch datasets:
+
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched"))
+
+ppbincident_dispatched %>%
+  group_by(call_group) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_dispatched %>%
+  group_by(call_detail) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_dispatched %>%
+  group_by(call_source) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+```
+So, 102 out of a possible 114 kinds of *call_detail* appear among dispatched force-incidents, 40 out of 41 possible kinds of *call_group*.  As the third table shows, only dispatched calls were included.  Dispatched calls account for 76% of all force-incidents, the remaining 24% are self-initiated by the officer (for example, traffic stops).
+
+It would be good to know how much bias is introduced by selecting only dispatched call from use of force incidents.  We can do this by comparing dispatched to non-dispatched incidents on characteristics like number of officers involved, number of inflictions of force, highest level of force used, and *call_detail* and *call_group*.
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(call_group) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(call_group) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+```
+The following extracts from the tables for Dispatched and Officer-Initiated incidents, each of which accounts for 70-80% of all incidents in each category, indicate large differences in the reasons that officers because involved in incidents involving force.  There is hardly any overlap.  Only "Disturbance" and "Assist" appear in both lists.  
+
+A possible denominator for officer-initiated incidents might be the number of officers on the street.  I do not know if such data exist and are available for analysis.
+
+**DISPATCHED INCIDENTS**
+Disturbance	525	0.206		
+Welfare Check	301	0.118		
+Unwanted Person	246	0.097		
+Behavioral Health	234	0.092		
+Suspicious	204	0.080		
+Assault	131	0.052		
+Assist	111	0.044		
+Theft	81	0.032		
+Collision	74	0.029		
+Threat
+
+**OFFICER-INITIATED INCIDENTS**
+Traffic Stop	166	0.210		
+Subject Stop	142	0.180		
+Stolen Vehicle	80	0.101		
+Other	76	0.096		
+Suspicious	66	0.084		
+Warrant	62	0.079		
+Assist	40	0.051		
+Area/Premise Check	31	0.039		
+Disturbance	21	0.027		
+Escape/Pursuit
+
+
+
+Let's compare on *call_detail*:
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(call_detail) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(call_detail) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+```
+
+The results resemble what we saw for *call_group*.
+
+Let's see how various impairments compare by *call_source".
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(incid_mental_any) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(incid_mental_any) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+Incidents with police perception of impairment due to mental illness are greatly concentrated in the dispatched subset, 22% of dispatched vs. 4% of self-initiated.  So, for evaluating changes in police treatment of persons with mental impairments, we do not give up much information by having to restrict analysis to the dispatched subset of force-inflictions.  This is very good news.
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(incid_drug_any) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(incid_drug_any) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+Officer perception of impairment due to use of drugs is also highly skewed towards dispatched incidents, 36% vs 22% self-initiated.  
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(incid_etoh_any ) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(incid_etoh_any) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+Perceive impairment due to alcohol is double among the dispatched incidents, 26% vs. 13% self-initiated.
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(incid_housed) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(incid_housed) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+Civilians involved in dispatched incidents are slightly less likely to report a residence address (51%) and civilians in officer-initiated incidents (54%).  Given the strong associations of mental and substance impairment with dispatch status, this is a strong indication that PPB data on civilian addresses is not a useful indicator of houselessness.
+
+**QUESTION: I wonder whether lethal and near-lethal use of force incidents are also usually dispatched.**
+
+Now let's see how amount and degree of force is related to dispatched vs. self-initiated incidents.
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    summarise(mean_sum = mean(force_degree_sum)) 
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    summarise(mean_sum = mean(force_degree_sum)) 
+  
+```
+
+Use of force is somewhat more severe in dispatched cases, 4.63 = sum of force degrees across inflictions, vs 4.06 in officer-initiated incidents.  
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    summarise(mean_sum = mean(force_degree_max)) 
+ 
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    summarise(mean_sum = mean(force_degree_max)) 
+```
+The sum of max force degree across all officers involved in an incident is slightly **lower** in dispatched than in officer-initiated incidents, 1.46 vs 1.58, respectively.  Is this related to how many officers are involved in dispatched vs. officer-initiated incidents?  Let's look:
+
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    summarise(mean_sum = mean(incid_officer_sum)) 
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    summarise(mean_sum = mean(incid_officer_sum)) 
+```
+
+Yes.  Slightly more officers attend dispatched incidents than self-initiated incidents of force, 2.26 vs 1.91.  So, at this rough level of analysis, it looks like the number of inflictions of force are higher in dispatched incidents because more officers are likely to be involved in dispatched cases, BUT the maximum degree of infliction is a bit higher in officer-initiated incidents.  
+
+Does this mean that, in incidents involving multiple officers, more than one officer is reporting the same infliction of force?  Or does it mean that a single officer, working alone, feels a need to use a higher level of force to achieve compliance, or to feel safe?
+
+A quick way to sort this out is to look at the initial use of force, which should reflect an officer's expectation of risk or challenge.  Let's compare the initial level of force per incident, to the number of officers using force during an incident:
+
+```{r}
+ppbincident %>%
+  group_by(incid_officer_sum) %>%
+  summarise(ave_init_force_degree = mean(force1_degree))
+
+```
+We get a U-shaped distribution, with lone officers using more invasive force and then more invasive force being used used when a large number of officers attend an incident.  Hypothetically, lone officers substitute force for numbers, or lone officers use more force when other officers are not watching.  Again hypthetically, incidents involving multiple officers are major, high-danger calls to which a large number of officers are dispatched.  Or, it could be that higher levels of initial force trigger more resistance and create incidents that attract or require additional officers to resolve.  This questions could be further explored, but not right now.  Other fish to fry.
+
+While we are looking at dispatched vs. officer-initiated calls, let's also see whether civilian race and ethnicity has associations.  Do black civilians end up in use-of-force situations more frequently than other races as a result of, say, traffic stops and other officer-initiated confrontations?
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+ppbincident_dispatched %>%
+    group_by(race_black) %>%
+  summarise(count = n()) %>%
+  mutate(freq = round(count / sum(count), 3)) %>% 
+  arrange(desc(freq))
+
+ppbincident_self <- dplyr::filter(ppbincident, call_source %in% c("Self-Initiated")) 
+ppbincident_self %>%
+    group_by(race_black) %>%
+  summarise(count = n()) %>%
+  mutate(freq = round(count / sum(count), 3)) %>% 
+  arrange(desc(freq))
+``` 
+We see no difference at all in frequency of black civilian involvement in dispatched vs. officer-initiated use-of-force incidents.  We are looking here at just officer-civilian interactions which result in a use of physical threat or force.  It still could be that black civilians are stopped more frequently than whites on officers' own initiative, but that blacks are better at avoiding physical confrontations.   Or, it could be that officers are more forceful against blacks however they encounter them, whether through dispatch or personal initiative.  The rates of black involvement in use-of-force incidents are obviously much higher than the proportion of blacks in the Portland population, which is 6.6 to 7.9% (all ages). Most use of force incidents involve males between the ages of 15 and 50.  Black Portlanders account for more than 7.9% of this age-sex subgroup but I have not yet been able to located a recent estimate.  The poor also are more likely to attract police attention: the data we have contain no information about income or wealth: possibly, with a lot of work, someone could infer SES from place of residence, but only about half of civilians involved in a force incident provide an address.  
+
+Here is what the age and sex distribution of civilians involved in use-of-force incidents looks like:
+
+```{r}
+ppbincident_age_by_sex <- select(ppbincident, c(civil_age_f, civil_sex, race_black, race_white))
+ppbincident_age_by_sex <- filter(ppbincident_age_by_sex, !is.na(civil_age_f))  #drop rows with missing age
+
+ppbincident_age_by_sex_black <- filter(ppbincident_age_by_sex, race_black == 1)
+gmodels::CrossTable(ppbincident_age_by_sex_black$civil_age_f, ppbincident_age_by_sex_black$civil_sex)
+
+ppbincident_age_by_sex_white <- filter(ppbincident_age_by_sex, race_white == 1)
+gmodels::CrossTable(ppbincident_age_by_sex_white$civil_age_f, ppbincident_age_by_sex_white$civil_sex)
+```
+
+The crosstabs above are difficult to compare visually but basically they show that black men aged 15-24 are greatly over-represented in use of force incidents compared to young white men and, to compensate, black men are underrepresented in the 35-49 year age group.  As mentioned previously, I do not have data presently to say whether young black men (and women) are over-represented in the population distribution as a whole.
+
+Interestingly, among both blacks and whites, young women are over-represented in force incidents compared to males.  As with the males, young black women are over-represented vs. young white women.
+
+
+We could look more specifically at race frequency by type of call...
+
+```{r}
+ppbincident_call_type <- select(ppbincident, c(civil_age_f, civil_sex, race_black, race_white, civil_race, call_detail, call_group))
+ppbincident_call_type <- filter(ppbincident_call_type, !is.na(civil_age_f), !is.na(call_detail), !is.na(call_group), !is.na(civil_race))  #drop rows with missing values, if any
+#ppbincident_call_type %>%
+  gmodels::CrossTable(ppbincident_call_type$call_detail, ppbincident_call_type$civil_race, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+  gmodels::CrossTable(ppbincident_call_type$call_group, ppbincident_call_type$civil_race, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+  
+```
+
+I don't see many differences between blacks and whites.  Need to collapse these categories down.
+
+Let's see what it looks like for mental impairment:
+
+```{r}
+ppbincident_call_type <- select(ppbincident, c(civil_age_f, civil_sex, race_black, race_white, civil_race, call_detail, call_group, incid_mental_any))
+ppbincident_call_type <- filter(ppbincident_call_type, !is.na(civil_age_f), !is.na(call_detail), !is.na(call_group), !is.na(civil_race))  #drop rows with missing values, if any
+#ppbincident_call_type %>%
+  gmodels::CrossTable(ppbincident_call_type$call_detail, ppbincident_call_type$incid_mental_any, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+  gmodels::CrossTable(ppbincident_call_type$call_group, ppbincident_call_type$incid_mental_any, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+```
+The big categories for mental impairment compared to no mental impairment in *call_detail* are ECIT ("Enhanced Crisis Intervention Team"), suicide, and welfare check-priority.  The big categories in *call_group* are Assist, Behavioral Health, and Welfare Check.  What exactly are *call_detail* and *call_group* and how do they differ?  According to PPB metadate page https://www.portlandoregon.gov/police/article/695905 , both are assigned by the Bureau of Emergency Communications (911), so are assigned prior to the incident.  
+
+Do we have similar groupings for the dispatched dataset?  The hopefully comparable variables there are *FinalCallGroup* and *FinalCallCategory*.
+
+```{r}
+#The following makes a massive unreadable table
+#gmodels::CrossTable(ppbdispatch$FinalCallGroup, ppbdispatch$FinalCallCategory, prop.chisq=FALSE)
+
+ppbdispatch %>%
+  group_by(FinalCallCategory) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+```{r}
+
+ppbincident_dispatched %>%
+  group_by(call_group) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+```
+Looks like the values in *ppbdispatch$FinalCallCategory* and *ppbincident_dispatched$call_group* are identical.  Good.  There are 10 final call categories that do not appear in the use of force dataset.  Except for Behavioral Health, which accounts for 9% of force incidents but only 2% of 911 dispatches, the higher frequency call types are the same in the dispatch and force datasets, although the order differs.  Disturbance is much more frequent in the force data than it is in the dispatch data.
+
+```{r}
+ppbdispatch %>%
+  group_by(FinalCallGroup) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+
+
+```{r}
+ppbincident_dispatched %>%
+  group_by(call_detail) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+```
+
+So, *call_detail* is super detailed but the *FinalCallGroup* variable from the dispatch dataset is very collapsed.  No link possible via these two variables.  Doesn't look like the *FinalCallGroup* will be a very useful collapse, I will do my own collapsing using *call_group* / *FinalCallCategory*. 
+
+Because drug and alcohol use are associated with mental impairment, and because it looks like officers' perception of mental impairment is insensitive, in the statistical sense, and very closely linked to 911 identification of mental health distress, maybe I can create a denominator for the use of force dataset that includes data on drug and etoh impairment, also.  Let's look at the associations between drug and etoh and *call_group*.  
+
+```{r}
+ppbincident_call_type <- select(ppbincident, c(civil_age_f, civil_sex, race_black, race_white, civil_race, call_detail, call_group, incid_mental_any, incid_drug_any, incid_etoh_any))
+ppbincident_call_type <- filter(ppbincident_call_type, !is.na(civil_age_f), !is.na(call_detail), !is.na(call_group), !is.na(civil_race), !is.na(incid_drug_any), !is.na(incid_etoh_any))  #drop rows with missing values, if any
+#ppbincident_call_type %>%
+#  gmodels::CrossTable(ppbincident_call_type$call_detail, ppbincident_call_type$incid_mental_any, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+  gmodels::CrossTable(ppbincident_call_type$call_group, ppbincident_call_type$incid_drug_any, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+```
+Looks like for drug impairment, Welfare Check is the one category where drug is over-represented.
+
+```{r}
+gmodels::CrossTable(ppbincident_call_type$call_group, ppbincident_call_type$incid_etoh_any, prop.chisq=FALSE, prop.r = FALSE, prop.t = FALSE)
+```
+For drunkenness, the big items are Assault, Collision, Disturbance, and DUII, with a slight bulge for Welfare Check.  Behavioral Health is a large category for both drunk and sober.  Unclear whether we should include or exclude these ETOH traffic and Assault categories, since they are different from what we see with drug and mental.  
+
+Let's look at the overlap of mental impairment, drug impairment, and drunkeness in the use of force dataset...
+
+```{r}
+gmodels::CrossTable(ppbincident$incid_mental_any, ppbincident$incid_etoh_any, prop.chisq=FALSE, prop.r = T, prop.t = T, fisher = F, chisq = T, expected = T)
+gmodels::CrossTable(ppbincident$incid_mental_any, ppbincident$incid_drug_any, prop.chisq=FALSE, prop.r = T, prop.t = T, fisher = F, chisq = T, expected = T)
+gmodels::CrossTable(ppbincident$incid_drug_any, ppbincident$incid_etoh_any, prop.chisq=FALSE, prop.r = T, prop.t = T, fisher = F, chisq = T, expected = T)
+```
+Despite the high Chi2 statistics for the 2 contingency tables that test for independence between mental impairment and drug or etoh impairment, the observed frequencies are not much different from the expected frequencies, that is, not much different from the frequencies that would be observed if there was no association between mental illness and substance use. Deviations from independence for mental vs etoh are *negative*.  For mental vs drug they are positive, i.e., mental impairment increases the risk of drug impairment, or vice versa.  The drug x etoh contingency is not statistically different from an hypothesis of independence.  
+
+**HOW SHOULD THE DENOMINATOR BE CONSTRUCTED?**
+
+The negative association between police officer perceptions of mental illness and drunkenness suggests that the types of 911 that are frequent with drunkenness but not with other substance or mental impairment, should not be include in a selection of call types that is intended to control for the volume of police dispatches that are likely to involved persons impaired by mental illness.  
+
+This conclusion is supported by epidemiologic data collected national by the US Substance Abuse and Mental Health Services Administration (SAMHSA).
+
+According to SAMHSA's most recent survey, alcohol abuse is much less common among persons with impairment due to mental illness than is the use of illicit drugs.  As detailed in Table 8.42B of SANHSA's 2020 National Survey of Drug Use and Health, almost 50% of persons with a diagnosable severe mental illness (SMI) reported using at least one "illicit drug" during the previous year.  (In SAMHSA's data, marijuana is considered an illicit drug but alcohol is not.)  39% reported using marijuana, 28% reported using one or more illicit substances other than marijuana, and 48% reported using at least one illicit substance including marijuana. Among persons with a diagnosable non-serious mental illness, 35% reported using one or more illicit drugs. Among persons reporting a major depressive episode (MDE) during the prior year, 44% said they had used an illicit drug; this proportion was the same whether or not the MDE caused severe impairment.
+
+By contrast, 10% of persons with SMI reported heavy alcohol use in 2020, versus 9% of those with MDE and 8% of those with a non-severe mental illness.  
+
+Among persons considered by SAMHSA to have a substance abuse disorder (SUD) that included overuse of alcohol, only 13% reported an SMI.  Among abusers of only alcohol, the proportion with an SMI was 10%.  See Table 8.41b.  However, among SUDs involving misuse of opioids, pain-relievers, and prescription psychotherapeutics, the proportions of person with an SMI each exceeded 30%.  When SMIs overused alcohol they were also highly likely to use illicit drugs as well.  These data indicate that the incremental contribution of ETOH abuse to the identification of persons likely to have an SMI, over an above non-etoh drug use and the perception by police of a mental health crisis, is very small. See https://www.samhsa.gov/data/report/2020-nsduh-detailed-tables.  
+
+I conclude that the inclusion of 911 calls commonly associated with drunkenness, in addition to 911 calls associated with impairment due to mental illness and illicit drug-use, would greatly expand the testing denominator, making making that denominator less specific for likely mental impairment, without increasing the number of SMI cases in the numerator very much.  
+
+
+**HOW SHOULD THE FORCE-INCIDENT DATASET BE COMBINED WITH THE ANNUAL DISPATCH DATASETS FOR THE CALCULATION OR RATES OF USE OF FORCE ON PERSONS AT HIGH RISK OF MENTAL ILLNESS?**
+
+The dispatch datasets contain micro-level identifiers such as exact data and near-exact geographic location.  Unfortunately, the design of the force and dispatch datasets makes it difficult to link them.  PPB included the names of days of the week in the force dataset but omitted actual days of the year.  PPB included days of the year in the dispatch dataset but them for events that they considered sensitive.  However, we can still match the datasets on month and year. 
+
+Both the force and the dispatch datasets identify the category of call as initially assigned by 911 at the time of dispatch.  We match exactly on this variable.
+
+Fortunately, for the calculation of changing rates of use of force, it is not necessary to match each incident of force to the exact dispatch that gave rise to it.  This is because, even if we could exactly match, we will not be able to use any other information in the dispatch datasets to predict or to control for factors that might have influenced the likelihood that a person with mental illness was the subject, or the likelihood that force was used.  There is simply very little additional data in the dispatch dataset to provide a basis for prediction.
+
+To merge the force and dispatch datasets, it is necessary to have one index variable that appears in each dataset.  I propose to construct in each dataset a variable that concatenates year, month, and dispatch category.  
+
+PPB reports about two use-of-force incidents per day, or, about 60 per month.  Officers are dispatched about 25,000 times per month.  Obviously, observations in the dispatch dataset cannot be uniquely identified by year, month, and dispatch category.  Dispatch categories in the force dataset also will occasionally repeat during a month.  Fortunately, unless there are unforeseen errors in the PPB data, we can expect to find at least as many duplicate index values in the dispatch data as we will find in the force data.  
+
+```{r}
+head(ppbdispatch, 5)
+
+  
+```
+```{r}
+head(ppbincident, 5)
+
+```
+
+**PLAN FOR MERGING INCIDENT AND DISPATCH DATASETS**
+
+The dplyr::full_join utility will join 2 datasets with unequal numbers of rows and set the unmatched rows to NA.  Then, I can change NAs to 0 as needed in the combined dataset, so that rates can be calculated.  
+
+Creating the index variable for matching will require creating a new variable in each dataset that looks like this:  "May-21_Disorder".  For the dispatch dataset, this requires concatenating *ReportMonthYear* and *FinalCallCategory*.  For the force dataset, a newvar "ReportMonthYear" must be created from *incid_month* and *incid_year*, which can then be concatenated with *call_group*. 
+
+Prior to merging, all rows where *call_source* != Dispatched will be removed from the dataset.  
+
+There may be some computing issues because 4 years combined of the dispatch dataset total about 1 million rows.  
+
+Can we get counts of use of force incidents for years prior to 2018?  We don't have a dataset for them but they could be added, nonetheless to the whole 10-year run of the dispatch dataset.  By hand, we could get total FDCRs by quarter back to 2013.  However, before 2017, we cannot calculate force INCIDENTS, only FDCRs.  We could do something crude and estimate incidents prior to 2017 from the ratio of FDCRs to incidents after 2017. 
+
+OK, first step, read in the compatible annual dispatch datasets:
+
+```{r}
+ppbdispatch2021 <- ppbdispatch
+ppbdispatch2020 <- read_csv("DispatchedCalls_OpenData_2020.csv")
+ppbdispatch2019 <- read_csv("DispatchedCalls_OpenData_2019.csv")
+ppbdispatch2018 <- read_csv("DispatchedCalls_OpenData_2018.csv")
+
+```
+
+
+OK, let's start by creating the index variable in each dataset:
+
+```{r}
+library(stringr)
+
+ppbdispatch$index <- str_c(ppbdispatch$ReportMonthYear, '', ppbdispatch$FinalCallCategory)
+
+unique(ppbdispatch$index)
+
+
+```
+That worked. This process must be repeated for each year of dispatch data...  and the annual datasets must be combined...  However, variables are classed differently from year to year.  Need to fix this.  Let's look at each year to find the conflicts...
+
+```{r}
+summary(ppbdispatch2021)
+summary(ppbdispatch2020)
+summary(ppbdispatch2019)
+summary(ppbdispatch2018)
+```
+The problem variable is *TimeinQueue*.  Let's just eliminate it from the combined dispatch dataset.
+
+
+```{r}
+
+ppbdispatch2021 <- select(ppbdispatch2021, c(FinalCallCategory, index, ResponseTime_sec, TravelTime_sec, ReportMonthYear, Neighborhood, Address, OpenDataX, OpenDataY, OpenDataLon, OpenDataLat, Priority, FinalCallGroup))
+
+
+ppbdispatch2020 <- as.data.frame(ppbdispatch2020)
+ppbdispatch2020$index <- str_c(ppbdispatch2020$ReportMonthYear, '', ppbdispatch2020$FinalCallCategory)
+ppbdispatch2020 <- select(ppbdispatch2020, c(FinalCallCategory, index, ResponseTime_sec, TravelTime_sec, ReportMonthYear, Neighborhood, Address, OpenDataX, OpenDataY, OpenDataLon, OpenDataLat, Priority, FinalCallGroup))
+
+
+
+ppbdispatch2019 <- as.data.frame(ppbdispatch2019)
+ppbdispatch2019$index <- str_c(ppbdispatch2019$ReportMonthYear, '', ppbdispatch2019$FinalCallCategory)
+ppbdispatch2019 <- select(ppbdispatch2019, c(FinalCallCategory, index, ResponseTime_sec, TravelTime_sec, ReportMonthYear, Neighborhood, Address, OpenDataX, OpenDataY, OpenDataLon, OpenDataLat, Priority, FinalCallGroup))
+
+
+ppbdispatch2018 <- as.data.frame(ppbdispatch2018)
+ppbdispatch2018$index <- str_c(ppbdispatch2018$ReportMonthYear, '', ppbdispatch2018$FinalCallCategory)
+ppbdispatch2018 <- select(ppbdispatch2018, c(FinalCallCategory, index, ResponseTime_sec, TravelTime_sec, ReportMonthYear, Neighborhood, Address, OpenDataX, OpenDataY, OpenDataLon, OpenDataLat, Priority, FinalCallGroup))
+
+ppbdispatch2018_2021 <- bind_rows(ppbdispatch2018, ppbdispatch2019, ppbdispatch2020, ppbdispatch2021)
+
+#get these large datasets out of the global environment to improve computer performance later in this script
+rm(ppbdispatch, ppbdispatch2018, ppbdispatch2019, ppbdispatch2020, ppbdispatch2021)
+
+print(ppbdispatch2018_2021)
+
+```
+Success!!!
+
+Now on to the force dataset..
+
+```{r}
+
+#create a year var in the form that matches the year part of CallMonthYear in the dispatch dataset
+
+ppbincident <- ppbincident %>% 
+  mutate(incid_year_2digit = as.numeric(substr(incid_year, 3, 4)))
+
+#create a month var that matches the 3-char month values in CallMonthYear
+  
+ppbincident <- ppbincident %>%
+  mutate(incid_month_3char = (substr(incid_month, 1, 3)))
+
+head(ppbincident, 10)
+
+
+#  df1 %>%
+#  mutate(ipo = as.numeric(substr(ipo, 1, 4)))
+```
+
+Success but let's make sure that the first three chars of each month-name is what *ReportMonthYear* actually contains...
+
+```{r}
+unique(ppbdispatch2018_2021$ReportMonthYear)
+```
+That's OK, then.  Next step is to concatenate *incid_year_2digit* with *incid_month_3char* with a dash in-between.
+
+```{r}
+ppbincident$index_datepart <- str_c(ppbincident$incid_month_3char, '-', ppbincident$incid_year_2digit)
+
+unique(ppbincident$index_datepart)
+```
+Worked again.  Now to combine with *call_group* to get the final index var for the incident dataset.
+
+```{r}
+ppbincident$index <- str_c(ppbincident$index_datepart, '', ppbincident$call_group)
+
+ppbincident_2021 <- dplyr::filter(ppbincident, incid_year %in% c("2021"))
+ppbincident_2021_jan <- dplyr::filter(ppbincident_2021, incid_month %in% c("January"))
+
+unique(ppbincident_2021_jan$index)
+
+
+```
+Not that many call types in one month in the incident dataset.  Let's make absolutely sure...
+
+```{r}
+unique(ppbincident_2021_jan$call_group)
+```
+OK.  Same call-group values.  Now, compare with dispatch dataset to make sure they are the same...  sort them alphabetically to make comparison easier...
+
+
+
+```{r}
+sort(unique(ppbincident$call_group))
+sort(unique(ppbdispatch2018_2021$FinalCallCategory))
+```
+Satisfactory.  A few dispatch categories do not appear in the incident dataset and these are sensible omissions:  Fraud, Follow-up, Abuse, Person Contact, Street Racing, Parking Problem, Flagdown, Fireworks, Detail Patrol, and possibly a few others.  Note Abuse differs from Domestic Violence; the latter IS found in the incident dataset.
+
+Before moving on, let's clean up a bit by deleting those intermediate variables and datasets:
+
+```{r}
+#cleanup
+rm(ppbincident_2021)
+rm(ppbincident_2021_jan)
+```
+
+
+
+
+The following was not executed this time around: undone undone
+
+rm(age_by_sex)
+rm(age_by_sex_pct)
+rm(black_temp)
+rm(breaks)
+rm(breaks2)
+rm(breaks4)
+rm(class_summary)
+rm(d)
+rm(data)
+rm(data_temp2) 
+rm(data_test)
+rm(incident_unique)
+rm(mergetest)
+rm(mytable)
+rm(newtable)
+rm(newtable_first_dup_only)
+rm(newtable_uncorrected_dups_only)
+rm(output)
+rm(output2)
+
+```{r}
+
+rm(ppbincident_age_by_sex)
+rm(ppbincident_age_by_sex_black)
+rm(ppbincident_age_by_sex_white)
+rm(ppbincident_call_type)
+          
+```
+
+
+
+**MERGE INCIDENT AND DISPATCH DATASETS**
+
+
+Because this is a tricky task, I will test out the steps using toy datasets that I (and you) can look at in their entirety after each step.
+
+First, create a left hand side dataset, equivalent to dispatch...  This leftds contains on value, 1006left, that has no match in rightds.
+
+```{r}
+leftds <- tibble(
+  id     = rep(c("1001", "1001", "1001", "1001", "1001", "1002", "1002", "1002", "1002", "1002", "1003", "1003", "1003", "1003", "1003", "1004", "1004", "1004", "1004", "1004", "1006left")),
+  left_var_1_21  = c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21),
+) %>% 
+  print()
+```
+Now, a right hand side dataset equivalent to incident...  rightds contains a value that cannot match to leftds.  Each ds contains rows that share the same value of the index var, "id".  This is how the real data look.
+
+```{r}
+rightds <- tibble(
+  id     = rep(c("1001", "1001", "1002", "1003", "1003", "1003", "1004", "1005r")),
+  right_var_1_8  = c(1,2,3,4,5,6,7,8),
+  force = rep(1, n = 8)
+  ) %>% 
+  print()
+```
+
+Now, remove all the rows in leftds (dispatch) that do not have at least one match in rightds (incident).
+
+```{r}
+leftovers <- anti_join(leftds, rightds, by = "id") %>%
+print()
+```
+
+OK.  There is just one such row.  Now I need to get that 1006left value out of dispatch (leftds) because it will cause duplication downstream....
+
+```{r}
+goodfood <- semi_join(leftds, rightds, by = "id") %>%
+  print()
+```
+OK, success.  From 21 rows down to 20, and the correct row is removed, no 1006left.
+
+Now collapse leftds (disptach) down to just one row for each value of *index* that has a match.  This is necessary because, when R diplyr performs a join, it will match EVERY row on the RHS with EACH row on the LHS.  Doesn't seem to be any way around this behavior.
+
+```{r}
+goodfood_unique <- distinct(goodfood, id, .keep_all = TRUE) %>%
+print()
+```
+
+Now, join rightds (incident) to leftds (collapsed dispatch) so that each row in incident that matches the one matching row in dispatch gets included, and any unmatched rows in incident are also brought along as a check to see if there are errors in coding *call_detail* or year or month in incident.  
+
+```{r}
+maincourse <- right_join(goodfood_unique, rightds, by = "id") %>%
+  print()
+```
+That worked but, assuming none or few errors found, in the real data.  To ensure against that, I would repeat the process and EXCLUDE the unmatched rows from incident. Possibly a left_join would do this, let just check that...
+
+```{r}
+maincourse_cleaned <- left_join(goodfood_unique, rightds, by = "id") %>%
+  print()
+```
+Yes, left-join does it.  
+
+Now we have the ds maincourse that contains the correct matches in rightds (incident) with appropriate matches in leftds (dispatch).  We need to (a) bind back in all the matchable rows in leftds were excluded when we selected single rows for each value of "id" and, at the end, (b) bind back in all the rows of leftds that had no match in rightds.  
+
+To accomplish (a), I will create a ds that contains all the rows with duplicate IDs that were removed from leftds when I created *unique*, the dataset with only one row for every value of "id".  Then I will combine this back with the *maincourse* dataset to get a new complete leftds.  
+
+Note that this new "complete" leftds will contain more rows than it had originally because *maincourse* will contain some rows that have doubled or tripled up.  Because, in the real data, there are 500 dispatches for every force incident, this should not introduce appreciable bias.  It will make the final dataset a little more like an odds-ratio dataset and a little less like a probability dataset.  I lack the programming chops to remedy this error.  Instead, I will follow the statisticians and assume that odds ratios and proportions are identical when the probability of an event is low.  Bias will be introduced into a time-series analysis of changes in the probability of use of force per dispatch because the amount of the error will increase when the probability goes up, which will bias towards finding no differences across time periods because the denominator will increase (slightly) when the numerator increases (subtantially).  I did a little spreadsheet to see if the bias could be meaningful: a doubling in the true rate from 1/500 to 2/500 (0.002 to 0.004) was biased downward by only a tiny amount (0.002 to 0.003988036).  I can live with this!
+
+OK, back to programming.  To add back in the non-duplicated but matchable leftds rows, I first need to identify them...  Note that I use a different variable that is unique to each leftds row for the anti_join.  Such a variable must be grabbed from the dispatch dataset, or created.  Requires change above in which *ppbdispatch* vars are retained. undone
+
+```{r}
+goodfood_not_unique <- anti_join(goodfood, goodfood_unique, by = "left_var_1_21") %>%
+  print() 
+```
+Looks OK.  Rows 1, 6, 11, and 16 are filtered out.  Those are the rows that were matched and in some cases duplicated by merging with rightds.
+
+Now append goodfood_not_unique to maincourse_cleaned...
+
+```{r}
+goodfood_fullplate <- bind_rows(maincourse_cleaned, goodfood_not_unique)  %>%
+  print()
+```
+Lovely!  Note that we have 23 rows now, instead of 20, as expected.
+
+Now, final step is to bring the unmatchable rows (actually, it's just one row) from leftds, which I called leftovers, back into the dataset....
+
+```{r}
+full_meal_deal <- bind_rows(goodfood_fullplate, leftovers) %>%
+print()
+```
+That worked!  25 rows, as expected and desired.  We now have a dataset that can be analyzed for rates of use of force over time, and in selected call types as appropriate for tracking force incidents involving the mentally impaired.
+
+During analysis I must deal with all the NAs in the force variables--I really want these values to be zero but maybe I can run the statistics with the NAs included (as if they were zeroes).  Let's just try one statistical procedure to see if the NAs stay in ...
+
+```{r}
+full_meal_deal %>%
+  group_by(force, left_var_1_21) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+```
+OK, NAs preserved.  Wonder if this will work with a GLM or a time series.  
+
+DRUMROLLLLLLL  Let's now replicate the toy model in the real datasets...
+
+Next BIG process is to merge the incident and dispatch datasets on *index*.  First step is to throw out all the observations in incidence dataset that were not dispatched:
+
+```{r}
+ppbincident_dispatched <- dplyr::filter(ppbincident, call_source %in% c("Dispatched")) 
+
+nrow(ppbincident_dispatched)
+ncol(ppbincident_dispatched)
+
+```
+Down to 2542 observations.  Good.
+
+Next step is to join a row in ppbincident_dispatched to one similar row in ppbdispatch while retaining all the unjoined rows in dispatch and setting their values for the variables in ppbincident to NA.
+
+To avoid possible artifacts arising from different force-type and force-level definitions in 2017, I will limit the join to the years 2018 through current.  
+
+To create the 2018 - 2021 dispatch dataset, I previously merged the 4 annual dispatch datasets. 
+
+
+```{r}
+dispatch_unmatched <- anti_join(ppbdispatch2018_2021, ppbincident_dispatched, by = "index") 
+  nrow(dispatch_unmatched) 
+  ncol(dispatch_unmatched)
+#print()
+```
+
+
+```{r}
+dispatch_matchable <- semi_join(ppbdispatch2018_2021, ppbincident_dispatched, by = "index") 
+  nrow(dispatch_matchable) 
+  ncol(dispatch_matchable)
+# print()
+```
+
+```{r}
+dispatch_matchable_unique <- distinct(dispatch_matchable, index, .keep_all = TRUE) 
+  nrow(dispatch_matchable_unique) 
+  ncol(dispatch_matchable_unique)
+#print()
+```
+Now we can combine **dispatch_matchable_unique** with the dispatched force incidents (**ppbincident_dispatched**) to get a combined dataset that contains all the force incidents that were coded as dispatched and that also match an actual 911 dispatch of the same month and year.  I will use left_join so as to exclude any force incidents said to be dispatched that nevertheless cannot be matched to actual dispatch record.
+
+```{r}
+dispincid_matched <- left_join(dispatch_matchable_unique, ppbincident_dispatched, by = "index") 
+  nrow(dispincid_matched) 
+  ncol(dispincid_matched)
+  #print()
+```
+Hmmm. Looks like 2542 - 2202 = 340 "dispatched" use-of-force incidents do not have a matching dispatch in the dispatch dataset.  This is a fairly large number of misses, about 15% of all the incidents that were coded as dispatched.  
+
+Perhaps the *Type of Call* variable in the FDCRs includes more than just 911 dispatches.  The official PPB metadata for the "Type of Call" variable says, "Whether call was initiated by an officer (Self-Initiated/Directed) or dispatched by BOEC (Dispatched) or assisting another agency (Outside Agency)."  See https://www.portlandoregon.gov/police/article/695905  Is is possible that some force incidents result in officer calls for assistance and that the officers called in wrote these down as dispatches?  If that's the explanation, or to determine if that is the explanation, I could go back into the *create_incident.Rmd* script and change the join command so that *call_source* = Dispatched if and only if no FDCR says Self-Initiated/Directed or Outside Agency.  Of course, if the explanation is confirmed, the left_join that I just performed remedies the problem.
+
+This is just one of many possible explanations, however.  And the 15% loss of matches also may underestimate the amount of error in the force incident variable, *call_type*, considering that among ~25,000 911 dispatches per month, many potential matches are available, even if they occurred on different days, i.e., were not truly exact matches.  For the purpose of my analysis of rates, exact matches are not necessary.  We just want to the get the incidents and the dispatches inside the same dataset on the same months and years.  So the question arises, if there is so much error in what the FDCRs contain about dispatching vis a vis the 911 dataset, should we try to exclude the unmatched force incidents that were said to be dispatched, or include them to avoid underestimating rates of use of force?  
+
+I think, given the uncertainties, I will revert to using all the said-to-have-been dispatched in the numerator of the rate calculation.  So this requires a right-join rather than the left-join that I used above.
+
+```{r}
+dispincid_matched <- right_join(dispatch_matchable_unique, ppbincident_dispatched, by = "index") 
+  nrow(dispincid_matched) 
+  ncol(dispincid_matched)
+```
+
+
+Good.  **ppbincident_dispatched** also had 2542 observations.  So that's the exactly correct number of rows.  For columns, 235 +5 = 240 cols minus 1 col for the non-duplication of *index* = 239, which also is exactly what we got.
+
+Note, however, that **dispincid_matched** will include some NA values for rows in **ppbincident_dispatched** that do note have matches.  This is not a problem because there will no reason to used other variables from the dispatch data to predict or provide statistical controls on rate predictions.
+
+Now let's merge **dispincid_matched** back together with the other match-able dispatches dispatches that we previously set aside with the *distinct()* command.  To do this, we must first create a dataset that contains on the match-able dispatches that were not retained in **dispatch_matchable_unique**.  To do that, we need different index variables to distinguish the included rows from the excluded rows.  Let's see the options:
+
+```{r}
+ls(dispatch_matchable)
+```
+
+
+
+```{r}
+dispatch_matchable_not_unique <- anti_join(dispatch_matchable, dispatch_matchable_unique, by = c("ResponseTime_sec", "TravelTime_sec", "OpenDataLat",   "OpenDataLon",       "OpenDataX", "OpenDataY", "Priority") ) 
+  nrow(dispatch_matchable_not_unique) 
+  ncol(dispatch_matchable_not_unique)
+```
+Good enough.  Should have 668155 - 737 = 667418 rows.  Looks like the other variables in **ppbdispatch** are not quite sufficiently unique to exclude inadvertent matches.  I added them all in to improve from a previous attempt and doing that greatly improved the result.  (Because of inconsistency among the years of dispatch data from the source, I did exclude one variable, *TimeInQueue*.  Later, it might be worth the time to go back and fix that var, bring it along, and possibly get closer to perfection.)
+
+Now we can combined the match-able but unmatched dispatches with the matched-and-merged dispatches.  The combined dataset will have NA values for all the force-incident variables that were not matched....
+
+```{r}
+dispincid_matchable <- bind_rows(dispatch_matchable_not_unique, dispincid_matched)  
+  nrow(dispincid_matchable)
+  ncol(dispincid_matchable)
+```
+Pretty close.    Should have 668155 rows and 239 columns.
+[1] 5
+
+```{r}
+dispatch_incident <- bind_rows(dispincid_matchable, dispatch_unmatched) 
+  nrow(dispatch_incident) 
+  ncol(dispatch_incident)
+#print()
+```
+It worked!  We should have slightly more than 1000477 rows (the original number in **ppbdispatch2018_2021**) and we do.  The leftover 713 almost exactly the 737 unique match-able rows that unavoidably got duplicated by the process I used to get the force incident dataset coaxed into the dispatch data.  As proven above, the net effect of the increase on the calculation of rates is imperceptible.
+
+Time to save this final database for subsequent analytic use:
+
+```{r}
+save(dispatch_incident, file = "ppbdispatch_incident_321.RData")
+
+write.csv(dispatch_incident, file = "ppbdispatch_incident_321.csv")
+
+```
+
+
+
