@@ -546,7 +546,7 @@ PIT - VIS: Per Wikipedia, "The PIT maneuver (pursuit intervention technique) or 
 
 Ram - VIS: striking a moving vehicle with a police vehicle to stop or force off the road.
 
-Takedown. Three values appear in the data: Takedown, Takedown (II and III), and Takedown (IV). Presumably, the Roman numerals refer to the level of force of the Takedown. (IV is lowest degree of force.) Takedown is a vague term. Takedown without an indication of force means what? Not assessed? Uncertain? Different time period of data collection?
+UPDATE: Takedown. Three values appear in the data: Takedown, Takedown (II and III), and Takedown (IV). Presumably, the Roman numerals refer to the level of force of the Takedown. (IV is lowest degree of force.) Takedown without an indication of force was used in 2017 only.  Later, 2017 will be excluded from analyses.
 
 Let's look at these uses of force by year.
 
