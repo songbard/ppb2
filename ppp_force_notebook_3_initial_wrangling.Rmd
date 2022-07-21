@@ -204,11 +204,12 @@ Most call_detail strings are self-explanatory.  "ECIT" means a call to the Enhan
 Later analyses can take advantage of the detail in this variable.  (call_group, see below, is as PPB-generated variable that provides one such categorization of call_detail values.)  For now, I will simply change the 6 NAs to "unknown," so as to preserve these cases for future analyses.
 
 ```{r}
-  library(tidyr)  
-  ppb_force$call_detail_raw[is.na(ppb_force$call_detail_raw)] <- "UNKNOWN"
-  ppb_force %>%
+#  library(tidyr)  
+ ppb_force$call_detail_raw[is.na(ppb_force$call_detail_raw)] <- "UNKNOWN"
+caldet321 <- ppb_force %>%
     group_by(call_detail_raw) %>%
     summarise(n())
+  print.data.frame(caldet321)
 ```
 This worked.  (Note that this code chunk permanently changes the ppb_force dataset.  So, if you run it again, it will look like it worked again but actually here are no NAs to convert anymore so the code does nothing.  summarize() will show the correct outcome but that is the result of the first time the code was run.)  
 
@@ -1227,14 +1228,32 @@ There does seem to be a non-linear correlation with Year. Short-tenure offices w
 
 **"recordcount_1"      **  undone
 
-According to PPB Metadata description, Record Count is 'The number of times a record (or FDCR) has been submitted. In the overwhelming majority of cases there is only a single record submitted, however if an officer uses more instances of force than can be tracked on a single FDCR (up to 8) a second will be submitted under the same Record ID. The 'Record Count' will display how many duplicate instances there are for an officer in an single event. For example, if an officer uses force on the same subject in the same instance 9 or more times, there will be a Record Count of "2".
+According to PPB Metadata description, Record Count is 'The number of times a record (or FDCR) has been submitted. In the overwhelming majority of cases there is only a single record submitted, however if an officer uses more inst.groupsances of force than can be tracked on a single FDCR (up to 8) a second will be submitted under the same Record ID. The 'Record Count' will display how many duplicate instances there are for an officer in an single event. For example, if an officer uses force on the same subject in the same instance 9 or more times, there will be a Record Count of "2".
 
 ```{r}
 ppb_force %>%
-  group_by(recordcount_1_raw) %>%
+  group_by(recordcount_1_raw, recordcount_2_raw, .groups = "rowwise") %>%
   summarise(n())
 ```
 Evidently, there was one encounter in which more than 8 uses of force occurred, and 1 encounter during which one office used force more than 72 times.  This last observation seems unlikely.  
+
+UPDATE DURING NEW SCRIPT_1 TESTING: THE N=2 CASE DISAPPEARED.  LET'S SEE WHAT INCIDENT IT WAS...
+
+```{r}
+data_test29 <- ppb_force122[ppb_force122$recordcount_1_raw == 2, ]
+data_test29
+```
+```{r}
+remove(data_test29)
+```
+There are supposedly at least two FDRCs but where is #2?  Let's search on the incident ID.
+
+```{r}
+data_test29 <- ppb_force122[ppb_force122$incid_id_raw == 706548204, ] %>%
+  print(n=20)
+#data_test29
+```
+So this is the same incident for which 1 FDRC had recordcount2raw = 10 see below (BUT HAS RECORDCOUNT1raw = 2)  IN THIS CASE, RECOUNT_1 INDICATES THE RECORD WITH THE 2 IS THE SECOND FDRC SUBMITTED BY THE SAME OFFICER.  
 
 Let's take a look at the observation where reccount1 = 10:
 
