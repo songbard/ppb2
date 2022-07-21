@@ -3,21 +3,24 @@ __Collaborative Analysis and Reporting of Portland OR USA Police Department Data
 
 ___Unless otherwise labelled, material in this repository is subject to copyright and licensed for free duplication and modification under the most recent version of the Replication Commons Public License, posted at www.replicationcommons.org.  In return for free access and the right to create downstream work from the licensed work, the Replication Commons Public License requires users to provide sufficient code and data for their downstream work to be replicated, and to require uses of their work to do the same.  In other words, the License sustains the norms and practices of high-quality public-domain science.  Copying or use of material from this repository's consitutes acceptance of this license.___ 
 
+_UPDATE 20 JULY 2022:  J Brown uploaded 2 more quarters of PPB use of force data and added it to the existing FDCR dataset.  He went carefully through the original program, called ppb_force_notebook_3_initial_wrangling.Rmd, fixed bugs, made sure the program correctly processed the new data, and saved new output datasets.  The new program is called "script_1_ppbforce_thru_2022_q1.Rmd".    The new dataset is called "ppbforce_clean_q122.csv".
+
 __UPDATE 14 June 2022: J Brown created this repository "ppb2" to replace the original repository "ppb".  The new ppb2 repo has the ability to hold, push, and pull large files like the datasets used and created in the project.  If you want to talk about  participating in this project, please email Dr. Brown at jonabrown@gmail.com.  Most or Dr. Brown's effort right now is focused on creating a scientific publication that reports and tests explanations for the findings reported per the 30 Apr update, below.__
 
 __UPDATE 12 June 2022:  Here is an outline of the sequence of programs and datasets that we have generated so far. There are 4 large scripts (programs).  The scripts are written as RMarkdown Notebooks, so that the development of ideas, hypotheses, and understandings can be documented in real time--just like a laboratory notebook.  RMarkdown scripts bear the suffix, Rmd.  The output of each Rmd is an input or the input to the next.  The fifth major program will be the first scientific paper and it will be developed in Quarto, which is a new version of RMarkdown.  This will use datasets and code from the first 4 scripts and will evolve into a finished product rather than remain as a "Notebook."__
 
-INPUT TO PROGRAM 1:  UseOfForce.csv   
-		# I wrote the filename so it could be used for any download from the PPB website of the force dataset.  However, the current version contains data from inception (late 2017) thru 3rd Quarter 2021.  A ds thru Q4 2021 is now available  I (JB) am about to run the new dataset thru all the Rmd scripts to update the analysis for academic publication.
+INPUT TO PROGRAM 1:  "raw_ppb_force_thru_q1_2022.csv"
+		
 
-PROGRAM 1: ppb_force_notebook_3_initial_wrangling.Rmd
-		# this program examines the raw PPB use of force dataset and cleans up missing data, weird data, and modifies variables to create permanent variables for use in later analysis.  I started by calling the variables as received from PPB xxxxx_raw.  After I inspected and cleaned, I gave each variable a permanent name.  There is some logic to the names I gave.  The names group the vars by class, eg, forcen_xxxx refers to descriptors of each application of force, incid_xxxx denotes vars that describe the officer’s overall encounter with the civilian, civil_xxxx describes the civilian, etc.
+PROGRAM 1: "script_1_ppbforce_thru_2022_q1.Rmd"
+		# this program examines the raw PPB use of force dataset and cleans up missing data, weird data, and modifies variables to create permanent variables for use in later analysis.  After I inspected and cleaned, I gave each variable a permanent name.  The names group the vars by class, eg, forcen_xxxx refers to descriptors of each application of force, incid_xxxx denotes vars that describe the officer’s overall encounter with the civilian, civil_xxxx describes the civilian, etc.
 
-OUTPUT OF PROGRAM 1:  ppbforce_clean_q321.csv
-		# q321 indicates that the program processed data thru 3rd quarter 2021.  When I run the updated PPB file, the output data will be named *_q421.csv.
-
+OUTPUT OF PROGRAM 1:  "ppbforce_clean_q122.csv"
+		# 
 ………………………
-INPUT TO PROGRAM 2:  ppbforce_clean_q321.csv
+INPUT TO PROGRAM 2: "ppbforce_clean_q122.csv"
+
+AS OF JULY 20 2022, UPDATING TO INCLUDE NEW DATA STOPS HERE.  THE PROGRAM NAMES AND DATASET NAMES BELOW APPLY TO DATA ENDED Q3 2021.
 
 PROGRAM 2: create_incident_ds.Rmd
 		# this is the program that converts the PPB use of force data into a dataset whose observations are INCIDENTS of use of force.  One incident can involve up to several officers.  The rows of the raw PPB dataset are individual Force Data Collection Reports, FDCRs, which only describe what one officer did.  
