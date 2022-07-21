@@ -1879,22 +1879,17 @@ UPDATE: REALLY, THE ZERO IS THE ONLY INTERESTING VALUE OF THIS VARIABLE.  IT REP
 
 **CREATE PERMANENT CLEAN ppb_force122 DATASET**
 
-Note: I will not save ppb_force122 dataset back to csv after all these changes, but will create a new csv dataset that will contain all the permanent vars, after discarding the \_raw vars. That will preserve the raw dataset (as long as the ppb_force122 data is not permanently saved in this script by mistake.)
 
-*This script can then be applied to updated versions of the use-of-force dataset. Note that the whole script should be run and all the output checked visually to make sure that no changes to the structure or coding of the raw dataset need to be accounted for.*
-
-Some of the raw variables still need to be converted to permanent versions. I will do that here:
-
-Let's list all the variables in ppb_force122 to make sure all raw vars have been cleaned and wrangled to vars without the \_raw suffix.
+Let's list all the variables in ppb_force122 to make sure all raw vars have been cleaned and wrangled to vars without the _raw suffix.
 
 ```{r}
 ls(ppb_force122)
 ```
+UPDATE; FOR Q1 2022 DATA, ALL RAW VARS HAVE A PERMANENT COUNTERPART.  OK TO DELETE THE RAWS AND CREATE A PERMANENT FDCR DATASET.
 
 **NOw DROP THE RAW VARIABLES AND CREATE NEW CLEAN PPB USE OF FORCE DATASET, with vars grouped by type**
 
 ```{r}
-#UPDATE ALL ppbforce_clean_q122 to the latest _qyy.  can prob just search and replace on 122.  If global search and replace on this done from top then this will already be taken care of.
 
 ppbforce_clean_q122 = ppb_force122[,!grepl("_raw$", names(ppb_force122))]
 
@@ -1903,23 +1898,28 @@ ppbforce_clean_q122 = select(ppbforce_clean_q122, starts_with("call"), starts_wi
 ls(ppbforce_clean_q122)
 ```
 
-Success. \_raw variables removed, permanent variables retained.
+Success. \_raw variables removed, permanent variables retained.  UPDATE: NOW SORT VARS BY NAME...
 
 ```{r}
+ppbforce_clean_q122 <- ppbforce_clean_q122 %>%                       # Sort with dplyr
+  select(sort(names(.)))
+
 head(ppbforce_clean_q122, L=5)
 ```
 
-The reordering worked. (Primarily alphabetical by prefix.)
+The reordering worked. 
 
-**NOW, PERMANENTLY SAVE *ppbforce_clean_q321* AND REMOVE THE WORKING DATASET, *ppb_force122***
+
+**NOW, PERMANENTLY SAVE *ppbforce_clean_q321***
 
 ```{r}
-remove(ppb_force122)
+#remove(ppb_force122)  APPARENTLY, THE PRIOR COMMAND ALSO REMOVED PPB_FORCE122
 
 save(ppbforce_clean_q122, file = "ppbforce_clean_q122.RData")
 
 write.csv(ppbforce_clean_q122, file = "ppbforce_clean_q122.csv")
 ```
+
 
 **NOTES**
 
